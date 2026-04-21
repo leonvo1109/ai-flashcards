@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 import zipfile
+import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES_DIR = ROOT / "packages"
@@ -61,7 +63,21 @@ def validate_package(pkg_dir: Path) -> list[str]:
 
     return errors
 
+def vendor_dependencies():
+    """Run vendor_dependencies.py before building."""
+    print("Vendoring dependencies...\n")
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "vendor_dependencies.py")],
+        check=False
+    )
+    if result.returncode != 0:
+        raise SystemExit("Dependency vendoring failed.")
+
 BUILD_DIR.mkdir(exist_ok=True)
+
+vendor_dependencies()
+
+print("\nBuilding add-ons...\n")
 
 has_errors = False
 

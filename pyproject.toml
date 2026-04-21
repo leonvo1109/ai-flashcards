@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "anki-add-ons"
 version = "0.1.0"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
   "anki>=25.9.2",
   "aqt>=25.9.2",
-  "python-dotenv>=1.0.0"
+  "python-dotenv>=1.0.0",
 ]
 
 [tool.hatch.envs.default]
@@ -21,6 +21,7 @@ dependencies = [
 ]
 
 [tool.hatch.envs.default.scripts]
+vendor = "python scripts/vendor_dependencies.py"
 build = "python scripts/build_all.py"
 install-dev = [
   "python scripts/build_all.py",

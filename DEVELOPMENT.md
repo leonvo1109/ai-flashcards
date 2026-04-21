@@ -43,3 +43,10 @@ hatch run check   # Type-Check + Linting
 hatch run fmt     # Auto-Format
 ```
 
+## Pakete in jeweiliges lib-Verzeichnis installieren
+
+```zsh
+ANKI_PYTHON="~/PycharmProjects/anki-add-ons/.venv/bin/python"
+"$ANKI_PYTHON" -m pip install --upgrade --target packages/ai_flashcards/lib -r packages/ai_flashcards/requirements-runtime.txt
+
+```

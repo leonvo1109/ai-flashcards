@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "provider": "gemini",
-  "model": "gemini-2.0-flash",
+  "provider": "apple",
+  "model": "",
   "target_deck": "",
   "note_type": "",
   "max_cards_per_run": 10,
