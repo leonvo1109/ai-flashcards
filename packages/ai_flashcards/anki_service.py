@@ -1,5 +1,7 @@
 """Service for interacting with Anki database and card management."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -31,6 +33,130 @@ class DeckInfo:
 
 class AnkiService:
     """Service for accessing Anki data."""
+
+    PICKER_CURRENT_DECK = "__AI_FLASHPICK_CURRENT_DECK__"
+
+    @staticmethod
+    def note_pair_preview(note: Any) -> tuple[str, str]:
+        """First field + second field values for previews (works for every notetype)."""
+        flds = list(getattr(note, "fields", None) or [])
+        if len(flds) >= 2:
+            return flds[0], flds[1]
+        if len(flds) == 1:
+            return flds[0], ""
+        return "", ""
+
+    @staticmethod
+    def picker_tag_clause(tag: str) -> str:
+        t = tag.replace('"', "")
+        return f'tag:"{t}"'
+
+    @staticmethod
+    def picker_resolve_card_ids(
+        deck_choice: str | None,
+        *,
+        tag: str | None = None,
+        notetype_name: str | None = None,
+        extra_search: str | None = None,
+        limit: int = 400,
+    ) -> list[int]:
+        """Combine deck / tag / note-type filters with optional Browser-style search."""
+        if not mw.col:
+            return []
+
+        tag_st = (tag or "").strip()
+        nt_st = (notetype_name or "").strip()
+        extra_st = (extra_search or "").strip()
+
+        deck_is_current = deck_choice == AnkiService.PICKER_CURRENT_DECK
+        deck_named = isinstance(deck_choice, str) and not deck_is_current
+
+        deck_only_recent_sql = deck_named and not tag_st and not nt_st and not extra_st
+        if deck_only_recent_sql:
+            try:
+                did = mw.col.decks.id_for_name(deck_choice)  # type: ignore[arg-type]
+            except Exception:
+                did = None
+            if did is not None:
+                try:
+                    rows = mw.col.db.all(
+                        "select id from cards where did = ? order by mod desc limit ?",
+                        int(did),
+                        limit,
+                    )
+                    return [int(r[0]) for r in rows]
+                except Exception as e:
+                    print(f"[AI Flashcards] deck SQL picker fallback failed: {e}")
+
+        if deck_choice is None and not tag_st and not nt_st and not extra_st:
+            return AnkiService.get_recent_cards(limit)
+
+        parts: list[str] = []
+        if deck_is_current:
+            parts.append("deck:current")
+        elif deck_named:
+            parts.append(f'deck:"{deck_choice.replace(chr(34), "")}"')
+        if tag_st:
+            parts.append(AnkiService.picker_tag_clause(tag_st))
+        if nt_st:
+            parts.append(f'note:"{nt_st.replace(chr(34), "")}"')
+        if extra_st:
+            parts.append(extra_st)
+
+        query = " ".join(parts).strip() if parts else "*"
+
+        try:
+            from anki.errors import InvalidInput, SearchError
+
+            ids = mw.col.find_cards(query, order=True)
+            return [int(x) for x in ids[:limit]]
+        except (InvalidInput, SearchError, Exception) as e:
+            print(f"[AI Flashcards] picker search failed ({query!r}): {e}")
+            return []
+
+    @staticmethod
+    def picker_deck_combo_rows() -> list[tuple[str, str | None]]:
+        """Human label (indented hierarchy) + userData deck path or sentinel."""
+        if not mw.col:
+            return []
+
+        rows: list[tuple[str, str | None]] = [
+            ("(All decks)", None),
+            ("(Current deck)", AnkiService.PICKER_CURRENT_DECK),
+        ]
+        entries = sorted(
+            mw.col.decks.all_names_and_ids(
+                skip_empty_default=False, include_filtered=True
+            ),
+            key=lambda e: e.name.lower(),
+        )
+        for ent in entries:
+            depth = max(0, len(ent.name.split("::")) - 1)
+            indent = "\u2002" * min(depth * 3, 30)
+            label = f"{indent}{ent.name}"
+            rows.append((label, ent.name))
+        return rows
+
+    @staticmethod
+    def picker_notetype_combo_rows() -> list[tuple[str, str]]:
+        """Display label + canonical name used in searches."""
+        if not mw.col:
+            return []
+
+        pairs: list[tuple[str, str]] = []
+        for nt in mw.col.models.all_names_and_ids():
+            name = getattr(nt, "name", "") or ""
+            pairs.append((name, name))
+        pairs.sort(key=lambda x: x[0].lower())
+        return pairs
+
+    @staticmethod
+    def picker_tag_combo_items() -> list[str]:
+        if not mw.col:
+            return []
+        tags = mw.col.tags.all()
+        tags.sort(key=str.lower)
+        return tags[:500]
 
     @staticmethod
     def deck_name_for_did(deck_id: int | None) -> str:
@@ -65,10 +191,18 @@ class AnkiService:
             return CardInfo(
                 card_id=card_id,
                 note_id=note.id,
-                front=note["Front"] if "Front" in note else "",
-                back=note["Back"] if "Back" in note else "",
+                front=(
+                    note["Front"]
+                    if "Front" in note
+                    else AnkiService.note_pair_preview(note)[0]
+                ),
+                back=(
+                    note["Back"]
+                    if "Back" in note
+                    else AnkiService.note_pair_preview(note)[1]
+                ),
                 deck_name=AnkiService.deck_name_for_did(card.did),
-                model_name=note.model()["name"],
+                model_name=note.note_type()["name"] if note.note_type() else "",
                 tags=note.tags,
             )
         except Exception as e:
@@ -85,13 +219,14 @@ class AnkiService:
             card = mw.col.get_card(card_id)
             note = card.note()
 
+            front, back = AnkiService.note_pair_preview(note)
             return CardInfo(
                 card_id=card_id,
                 note_id=note.id,
-                front=note.get("Front", ""),
-                back=note.get("Back", ""),
+                front=front,
+                back=back,
                 deck_name=AnkiService.deck_name_for_did(card.did),
-                model_name=note.model()["name"],
+                model_name=note.note_type()["name"] if note.note_type() else "",
                 tags=note.tags,
             )
         except Exception as e:
@@ -153,7 +288,9 @@ class AnkiService:
                         note_types_set = set()
                         for card_id in cards_in_deck[:20]:  # Sample first 20
                             card = mw.col.get_card(card_id)
-                            note_types_set.add(card.note().model()["name"])
+                            nt_dict = card.note().note_type()
+                            if nt_dict:
+                                note_types_set.add(nt_dict["name"])
                         note_types = list(note_types_set)
                 except Exception:
                     pass
@@ -330,23 +467,27 @@ class AnkiService:
                 note = card.note()
                 sample_cards.append(
                     {
-                        "front": note.get("Front", "")[:100],  # First 100 chars
-                        "back": note.get("Back", "")[:100],
-                        "model": note.model()["name"],
+                        "front": AnkiService.note_pair_preview(note)[0][:100],
+                        "back": AnkiService.note_pair_preview(note)[1][:100],
+                        "model": note.note_type()["name"] if note.note_type() else "",
                         "tags": note.tags,
                     }
                 )
+
+            model_names_seen: set[str] = set()
+            for cid in cards[:20]:
+                try:
+                    nt = mw.col.get_card(cid).note().note_type()
+                    if nt:
+                        model_names_seen.add(nt["name"])
+                except Exception:
+                    continue
 
             return {
                 "deck_name": deck_name,
                 "total_cards": len(cards),
                 "sample_cards": sample_cards,
-                "model_names": list(
-                    set(
-                        mw.col.get_card(cid).note().model()["name"]
-                        for cid in cards[:20]
-                    )
-                ),
+                "model_names": sorted(model_names_seen),
             }
         except Exception as e:
             print(f"Error getting deck context: {e}")
@@ -365,13 +506,14 @@ class AnkiService:
             card = mw.reviewer.card
             note = card.note()
 
+            front, back = AnkiService.note_pair_preview(note)
             return CardInfo(
                 card_id=card.id,
                 note_id=note.id,
-                front=note.get("Front", ""),
-                back=note.get("Back", ""),
+                front=front,
+                back=back,
                 deck_name=AnkiService.deck_name_for_did(card.did),
-                model_name=note.model()["name"],
+                model_name=note.note_type()["name"] if note.note_type() else "",
                 tags=note.tags,
             )
         except Exception as e:

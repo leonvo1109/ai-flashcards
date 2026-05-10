@@ -31,7 +31,6 @@ from aqt.qt import (
     QDialog,
     QDialogButtonBox,
     QMenu,
-    QTimer,
 )
 from aqt.utils import qconnect, showInfo, showWarning
 
@@ -219,20 +218,55 @@ class EnhancedUI:
             QLabel("Pick a card here (same window as verify / variants):")
         )
 
+        filter_row = QHBoxLayout()
+        deck_combo = QComboBox()
+        deck_combo.setMinimumWidth(260)
+        for lbl, deck_data in AnkiService.picker_deck_combo_rows():
+            deck_combo.addItem(lbl, deck_data)
+        nt_combo = QComboBox()
+        nt_combo.setMinimumWidth(200)
+        nt_combo.addItem("(Any note type)", None)
+        for disp, canon in AnkiService.picker_notetype_combo_rows():
+            nt_combo.addItem(disp, canon)
+
+        tag_combo = QComboBox()
+        tag_combo.setEditable(True)
+        tag_combo.setMinimumWidth(200)
+        tag_combo.addItem("(Any tag)")
+        for tag_nm in AnkiService.picker_tag_combo_items():
+            tag_combo.addItem(tag_nm)
+        tag_le = tag_combo.lineEdit()
+        if tag_le is not None:
+            tag_le.setPlaceholderText("Pick or type a tag")
+
+        filter_row.addWidget(QLabel("Deck"))
+        filter_row.addWidget(deck_combo, stretch=3)
+        filter_row.addWidget(QLabel("Note type"))
+        filter_row.addWidget(nt_combo, stretch=2)
+        filter_row.addWidget(QLabel("Tag"))
+        filter_row.addWidget(tag_combo, stretch=2)
+        pick_layout_outer.addLayout(filter_row)
+
+        pick_layout_outer.addWidget(
+            QLabel(
+                "Extra text is combined with the filters (same rules as Browse search)."
+            )
+        )
+
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Find:"))
+        search_row.addWidget(QLabel("Find"))
         search_edit = QLineEdit()
         search_edit.setPlaceholderText(
-            'Anki search, e.g. deck:"Spanish" tag:marked  •  Blank + Search ⇒ recent cards'
+            "Optional Browser search, e.g. is:due  word  regex:pattern"
         )
         search_row.addWidget(search_edit, stretch=1)
-        btn_recent = QPushButton("Recent")
-        btn_recent.setAutoDefault(False)
-        btn_recent.setDefault(False)
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.setAutoDefault(False)
+        btn_refresh.setDefault(False)
         btn_search = QPushButton("Search")
         btn_search.setAutoDefault(False)
         btn_search.setDefault(False)
-        search_row.addWidget(btn_recent)
+        search_row.addWidget(btn_refresh)
         search_row.addWidget(btn_search)
         pick_layout_outer.addLayout(search_row)
 
@@ -241,35 +275,45 @@ class EnhancedUI:
         card_list.setMinimumHeight(260)
         pick_layout_outer.addWidget(card_list)
 
-        def reload_recent_cards() -> None:
-            search_edit.clear()
-            self.card_selector.load_recent_into_list(card_list, limit=400)
+        def picker_tag_use() -> str:
+            txt = tag_combo.currentText().strip()
+            return "" if not txt or txt == "(Any tag)" else txt
+
+        def picker_notetype_use() -> str | None:
+            nt = nt_combo.currentData(Qt.ItemDataRole.UserRole)
+            if nt:
+                return str(nt).strip() or None
+            return None
+
+        def reload_card_list() -> None:
+            if not mw.col:
+                return
+            deck_data = deck_combo.currentData(Qt.ItemDataRole.UserRole)
+            ids = AnkiService.picker_resolve_card_ids(
+                deck_data,
+                tag=picker_tag_use() or None,
+                notetype_name=picker_notetype_use(),
+                extra_search=search_edit.text().strip() or None,
+                limit=450,
+            )
+            self.card_selector.fill_card_list_widget(card_list, ids)
 
         def run_search_clicked() -> None:
             if not mw.col:
                 showWarning("Collection not ready.")
                 return
-            q = search_edit.text().strip()
-            if not q:
-                reload_recent_cards()
-                return
-            try:
-                from anki.errors import InvalidInput, SearchError
+            reload_card_list()
 
-                ids = mw.col.find_cards(q)
-            except (InvalidInput, SearchError) as e:
-                showWarning(f"Invalid or unsupported search:\n{e}")
-                return
-            except Exception as e:
-                showWarning(f"Search failed:\n{e}")
-                return
-            id_list = [int(x) for x in ids]
-            self.card_selector.fill_card_list_widget(card_list, id_list)
+        deck_combo.activated.connect(lambda _i: reload_card_list())
+        nt_combo.activated.connect(lambda _i: reload_card_list())
+        tag_combo.activated.connect(lambda _i: reload_card_list())
+        if tag_le is not None:
+            tag_le.editingFinished.connect(lambda: reload_card_list())
 
-        btn_recent.clicked.connect(reload_recent_cards)
+        btn_refresh.clicked.connect(reload_card_list)
         btn_search.clicked.connect(run_search_clicked)
         search_edit.returnPressed.connect(run_search_clicked)
-        reload_recent_cards()
+        reload_card_list()
 
         pick_wrap = QWidget()
         pick_wrap.setLayout(pick_layout_outer)
