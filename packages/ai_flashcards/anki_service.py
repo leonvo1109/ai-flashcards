@@ -157,6 +157,20 @@ class AnkiService:
             return []
 
     @staticmethod
+    def get_first_card_id_for_note(note_id: int) -> Optional[int]:
+        """Return one card id belonging to the note (for tagging after note creation)."""
+        if not mw.col:
+            return None
+        try:
+            cid = mw.col.db.scalar(
+                "select id from cards where nid = ? order by id limit 1", note_id
+            )
+            return int(cid) if cid is not None else None
+        except Exception as e:
+            print(f"Error resolving card for note {note_id}: {e}")
+            return None
+
+    @staticmethod
     def add_card(
         front: str,
         back: str,

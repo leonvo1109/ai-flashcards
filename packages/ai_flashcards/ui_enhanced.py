@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from PyQt6.QtWidgets import (
+    QApplication,
     QTextEdit,
     QPushButton,
     QComboBox,
@@ -105,11 +106,39 @@ class CardSelector:
             combo.addItem("No cards match filter - use Browse button")
 
     def get_selected_card(self, combo: QComboBox) -> CardInfo | None:
-        """Get the currently selected card."""
-        card_id = combo.currentData()
-        if not card_id:
-            return None
-        return AnkiService.get_card_by_id(card_id)
+        """Resolve the selected card; skip separator rows with no stored card id."""
+        idx = combo.currentIndex()
+        for j in range(idx, -1, -1):
+            cid = combo.itemData(j)
+            if cid is not None:
+                return AnkiService.get_card_by_id(int(cid))
+        for j in range(combo.count()):
+            cid = combo.itemData(j)
+            if cid is not None:
+                return AnkiService.get_card_by_id(int(cid))
+        return None
+
+    def ensure_combo_valid_card_row(self, combo: QComboBox) -> None:
+        """If the user lands on a category separator, move to the nearest real card."""
+        idx = combo.currentIndex()
+        if combo.itemData(idx) is not None:
+            return
+        new_i: int | None = None
+        for j in range(idx + 1, combo.count()):
+            if combo.itemData(j) is not None:
+                new_i = j
+                break
+        if new_i is None:
+            for j in range(0, idx):
+                if combo.itemData(j) is not None:
+                    new_i = j
+                    break
+        if new_i is None:
+            return
+        combo.blockSignals(True)
+        combo.setCurrentIndex(new_i)
+        combo.blockSignals(False)
+        combo.currentIndexChanged.emit(new_i)
 
     def browse_for_card(
         self, combo: QComboBox, parent_widget: QWidget | None = None
@@ -121,9 +150,16 @@ class CardSelector:
         try:
             import aqt
 
+            if parent_widget is not None:
+                parent_widget.hide()
+            QApplication.processEvents()
+
             browser = aqt.dialogs.open("Browser", mw)
             if getattr(browser.form, "searchEdit", None) is not None:
                 browser.form.searchEdit.setFocus()
+            browser.raise_()
+            browser.activateWindow()
+            QApplication.processEvents()
 
             loop = QEventLoop()
             last_cards: list[int] = []
@@ -169,6 +205,12 @@ class CardSelector:
             print(f"[AI Flashcards] Error opening browser: {e}")
             traceback.print_exc()
             return False
+        finally:
+            if parent_widget is not None:
+                parent_widget.show()
+                parent_widget.raise_()
+                parent_widget.activateWindow()
+                QApplication.processEvents()
 
 
 class EnhancedUI:
@@ -297,6 +339,10 @@ class EnhancedUI:
         )
         card_layout.addWidget(browse_button)
 
+        card_combo.currentIndexChanged.connect(
+            lambda _i: self.card_selector.ensure_combo_valid_card_row(card_combo)
+        )
+
         layout.addLayout(card_layout)
 
         # Tab widget for main functions
@@ -406,10 +452,19 @@ class EnhancedUI:
                     for issue in result.issues:
                         result_text += f"\n• {issue}"
 
+                if (
+                    not result.is_valid
+                    and result.suggested_improvements
+                    and self.tag_manager is not None
+                ):
+                    added = self._apply_auto_single_info_improvements(
+                        result.suggested_improvements, card
+                    )
+                    result_text += f"\n\nAdded {added} improved card(s); original tagged for review."
                 self.state.text_fields["context_results"].setText(result_text)
 
                 # Mark as verified if valid
-                if result.is_valid:
+                if result.is_valid and self.tag_manager is not None:
                     tags = self.tag_manager.get_verification_tags(is_verified=True)
                     AnkiService.add_tags_to_card(card.card_id, tags)
 
@@ -641,11 +696,15 @@ class EnhancedUI:
         file_button = QPushButton("Select File")
 
         def select_file():
+            dlg_opts = QFileDialog.Option.DontUseNativeDialog
             file_path, _ = QFileDialog.getOpenFileName(
                 parent_dialog,
                 "Select File",
-                "",
-                "All Supported Files (*.pdf *.pptx *.ppt *.png *.jpg *.jpeg *.bmp *.tiff);;PDF Files (*.pdf);;Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Presentation (*.pptx)",
+                str(Path.home()),
+                "Supported (*.pdf *.pptx *.png *.jpg *.jpeg *.bmp *.tiff *.txt *.md);;"
+                "PDF (*.pdf);;PowerPoint (*.pptx);;"
+                "Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Text (*.txt *.md);;All files (*)",
+                options=dlg_opts,
             )
             if not file_path:
                 return
@@ -655,6 +714,13 @@ class EnhancedUI:
 
                 p = Path(file_path)
                 suffix = p.suffix.lower()
+
+                if suffix in (".txt", ".md", ".markdown"):
+                    content_display.setPlainText(
+                        p.read_text(encoding="utf-8", errors="replace").strip()
+                    )
+                    source_combo.setCurrentIndex(0)
+                    return
 
                 if suffix == ".pdf":
                     try:
@@ -720,8 +786,9 @@ class EnhancedUI:
                     source_combo.setCurrentText("Presentation Slide")
 
                 else:
-                    content_display.setPlainText(
-                        f"[File content from {file_path} - unsupported type]"
+                    showWarning(
+                        f"Unsupported file type ({suffix or 'unknown'}).\n\n"
+                        "Use PDF, PPTX, images, or .txt/.md — or paste text manually."
                     )
             except Exception as e:
                 showWarning(f"Error loading file: {e}")
@@ -797,9 +864,68 @@ class EnhancedUI:
 
         return widget
 
+    def _note_type_from_config(self, default: str = "Basic") -> str:
+        try:
+            cfg = mw.addonManager.getConfig("ai_flashcards") or {}
+            name = str(cfg.get("note_type") or "").strip()
+            return name if name else default
+        except Exception:
+            return default
+
+    def _apply_auto_single_info_improvements(
+        self, improvements: list[dict], original_card: CardInfo
+    ) -> int:
+        """Create notes from verification splits and tag the original for review."""
+        if not improvements or self.tag_manager is None:
+            return 0
+
+        hm = self.hierarchy_manager
+        if hm is not None and hm.get_group(original_card.card_id) is None:
+            hm.create_group(
+                original_card.card_id,
+                group_name="AI single-info split",
+                group_description="Auto-generated narrower cards",
+            )
+
+        added = 0
+        for imp in improvements:
+            front = str(imp.get("front") or "").strip()
+            back = str(imp.get("back") or "").strip()
+            if not front and not back:
+                continue
+
+            tags = self.tag_manager.get_complete_tags_for_generated_card(
+                "text", is_verified=False, is_variant=True
+            )
+            tags.extend(["ai_improvement", "ai_single_info_split"])
+
+            note_id = AnkiService.add_card(
+                front=front or "(empty)",
+                back=back or "(empty)",
+                deck_name=original_card.deck_name,
+                model_name=original_card.model_name,
+                tags=tags,
+            )
+            if note_id:
+                added += 1
+                cid = AnkiService.get_first_card_id_for_note(note_id)
+                if hm is not None and cid is not None:
+                    hm.add_card_to_group(original_card.card_id, cid)
+
+        AnkiService.add_tags_to_card(
+            original_card.card_id,
+            ["ai_needs_review", "ai_split_parent_note"],
+        )
+        maybe_reset = getattr(mw, "maybeReset", None)
+        if callable(maybe_reset):
+            maybe_reset()
+        return added
+
     def _source_type_for_upload(self, source_type: str) -> str:
         """Normalize source type."""
-        s = source_type.lower()
+        s = source_type.lower().strip()
+        if s.startswith("text") and "input" in s:
+            return "text"
         if "pdf" in s:
             return "pdf"
         if "slide" in s or "ppt" in s:
@@ -841,95 +967,30 @@ class EnhancedUI:
         if verification.is_valid:
             result_text += "✓ Card looks good!\n\n"
             result_text += "This card follows best practices.\n\n"
-            tags = self.tag_manager.get_verification_tags(is_verified=True)
-            AnkiService.add_tags_to_card(card.card_id, tags)
-            result_text += "Card marked as 'ai_verified'\n"
+            if self.tag_manager is not None:
+                tags = self.tag_manager.get_verification_tags(is_verified=True)
+                AnkiService.add_tags_to_card(card.card_id, tags)
+                result_text += "Card marked as 'ai_verified'\n"
 
         else:
             result_text += "⚠ Issues found:\n\n"
             for issue in verification.issues:
                 result_text += f"• {issue}\n"
 
-            if verification.suggested_improvements:
-                result_text += "\n\nSuggested improvements:\n"
-                for i, improvement in enumerate(verification.suggested_improvements, 1):
-                    result_text += f"\n{i}. {improvement.get('type', 'Replacement')}:\n"
+            imp = verification.suggested_improvements
+            if imp and self.tag_manager is not None:
+                n_added = self._apply_auto_single_info_improvements(imp, card)
+                result_text += "\n\nSingle-information fix:\n"
+                result_text += f"Automatically added {n_added} narrower card(s). "
+                result_text += "The original note is tagged ai_needs_review / ai_split_parent_note.\n"
+                for i, improvement in enumerate(imp, 1):
+                    result_text += f"\n{i}. {improvement.get('type', 'Split')}:\n"
                     result_text += f"   Front: {improvement.get('front', '')}\n"
                     result_text += f"   Back: {improvement.get('back', '')}\n"
-
-                self._show_improvements_dialog(
-                    parent, verification.suggested_improvements, card
-                )
+            elif not imp:
+                result_text += "\n(No automatic split suggestions returned — try again or edit manually.)\n"
 
         self.state.text_fields["verify_results"].setText(result_text)
-
-    def _show_improvements_dialog(
-        self, parent: QDialog, improvements: list[dict], original_card: CardInfo
-    ) -> None:
-        """Show dialog to accept improvements."""
-        if not improvements:
-            return
-
-        improvement_dialog = QDialog(parent)
-        improvement_dialog.setWindowTitle("Card Improvements")
-        improvement_dialog.setMinimumSize(700, 500)
-
-        layout = QVBoxLayout(improvement_dialog)
-        layout.addWidget(QLabel("Click 'Add' to add replacement cards:"))
-
-        scroll = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-
-        for i, improvement in enumerate(improvements, 1):
-            frame_layout = QVBoxLayout()
-
-            add_button = QPushButton(f"Add Improvement {i}")
-            add_button.setStyleSheet("background-color: #4CAF50; color: white;")
-
-            def make_add_handler(imp):
-                def add_improvement():
-                    tags = self.tag_manager.get_complete_tags_for_generated_card(
-                        "text", is_verified=False
-                    )
-                    tags.append("ai_improvement")
-
-                    note_id = AnkiService.add_card(
-                        front=imp.get("front", ""),
-                        back=imp.get("back", ""),
-                        deck_name=original_card.deck_name,
-                        model_name=original_card.model_name,
-                        tags=tags,
-                    )
-
-                    if note_id:
-                        showInfo(f"Card added successfully!\n\nNote ID: {note_id}")
-
-                return add_improvement
-
-            add_button.clicked.connect(make_add_handler(improvement))
-            frame_layout.addWidget(add_button)
-
-            frame_layout.addWidget(
-                QLabel(f"Front: {improvement.get('front', '')[:100]}...")
-            )
-            frame_layout.addWidget(
-                QLabel(f"Back: {improvement.get('back', '')[:100]}...")
-            )
-
-            scroll_layout.addLayout(frame_layout)
-            scroll_layout.addWidget(QLabel("---"))
-
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
-
-        buttons = QDialogButtonBox.StandardButton.Ok
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(improvement_dialog.accept)
-        layout.addWidget(button_box)
-
-        improvement_dialog.exec()
 
     def _show_multi_type_results(
         self, parent: QDialog, multi_cards: MultiTypeCards, original_card: CardInfo
@@ -1107,7 +1168,7 @@ class EnhancedUI:
                     front=card.get("front", ""),
                     back=card.get("back", ""),
                     deck_name=deck_name,
-                    model_name="Basic",
+                    model_name=self._note_type_from_config("Basic"),
                     tags=tags,
                 )
                 if note_id:

@@ -84,11 +84,14 @@ Return JSON response."""
             # Parse the JSON response
             result = json.loads(response.text)
 
-            # Build suggested improvements - if single info principle violated, create cards
-            suggested_improvements = []
-
-            if result.get("violations", {}).get("single_info_principle", False):
-                # Generate replacement cards
+            # Build suggested improvements when the card fails validation or breaks
+            # the single-information principle.
+            suggested_improvements: list[dict] = []
+            single_violation = result.get("violations", {}).get(
+                "single_info_principle", False
+            )
+            not_valid = not result.get("is_valid", True)
+            if single_violation or not_valid:
                 build_cards = await self._build_single_info_cards(
                     card_front, card_back, deck_context
                 )
@@ -240,6 +243,7 @@ class CardGenerationService:
         self, text: str, deck_context: dict, num_cards: int = 5
     ) -> list[dict[str, str]]:
         """Generate cards from plain text."""
+        source_text = text
 
         system_prompt = f"""You are an expert at creating high-quality flashcards from text.
         
@@ -264,7 +268,7 @@ Respond with valid JSON array (no markdown):
 
         user_prompt = f"""Create {num_cards} flashcards from this text:
 
-{text}
+{source_text}
 
 Deck context: {deck_info}
 
@@ -281,13 +285,13 @@ Return valid JSON array only."""
             )
 
             # Parse JSON response
-            text = response.text
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
+            resp_text = response.text
+            if "```json" in resp_text:
+                resp_text = resp_text.split("```json")[1].split("```")[0]
+            elif "```" in resp_text:
+                resp_text = resp_text.split("```")[1].split("```")[0]
 
-            cards = json.loads(text.strip())
+            cards = json.loads(resp_text.strip())
             if not isinstance(cards, list) or not cards:
                 raise ValueError("LLM returned no cards")
 
@@ -307,7 +311,9 @@ Return valid JSON array only."""
                 import re
 
                 sentences = [
-                    s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()
+                    s.strip()
+                    for s in re.split(r"(?<=[.!?])\s+", source_text)
+                    if s.strip()
                 ]
                 cards_out = []
                 for i, sent in enumerate(sentences[:num_cards]):
@@ -319,7 +325,7 @@ Return valid JSON array only."""
                     return cards_out
 
                 # Final fallback: one card from the full text
-                snippet = text.strip().replace("\n", " ")[:180]
+                snippet = source_text.strip().replace("\n", " ")[:180]
                 if snippet:
                     return [
                         {
@@ -337,6 +343,7 @@ Return valid JSON array only."""
         self, image_text: str, image_type: str, deck_context: dict, num_cards: int = 5
     ) -> list[dict[str, str]]:
         """Generate cards from image text (screenshots, slides, PDFs, etc.)."""
+        source_text = image_text
 
         type_instructions = {
             "slide": "This is from presentation slides. Focus on key concepts and definitions.",
@@ -358,7 +365,7 @@ Respond with valid JSON array (no markdown):
 
         user_prompt = f"""Create {num_cards} flashcards from this {image_type} content:
 
-{image_text}
+{source_text}
 
 Deck: {deck_context.get("deck_name", "Unknown")}
 
@@ -375,13 +382,13 @@ Return valid JSON array only."""
             )
 
             # Parse JSON response
-            text = response.text
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
+            resp_text = response.text
+            if "```json" in resp_text:
+                resp_text = resp_text.split("```json")[1].split("```")[0]
+            elif "```" in resp_text:
+                resp_text = resp_text.split("```")[1].split("```")[0]
 
-            cards = json.loads(text.strip())
+            cards = json.loads(resp_text.strip())
             if not isinstance(cards, list) or not cards:
                 raise ValueError("LLM returned no cards")
             return [
@@ -395,4 +402,6 @@ Return valid JSON array only."""
 
         except Exception as e:
             print(f"Error generating cards from image: {e}")
-            return []
+            return await self.generate_from_text(
+                source_text, deck_context, num_cards=num_cards
+            )
