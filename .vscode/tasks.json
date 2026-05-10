@@ -4,7 +4,7 @@
     {
       "label": "Anki: Build + Install + Run (AI Flashcards)",
       "type": "shell",
-      "command": "uv run python scripts/dev.py all --addon ai_flashcards",
+      "command": "uv run python scripts/dev.py all",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -22,7 +22,7 @@
     {
       "label": "Anki: Build + Install + Run (with vendoring)",
       "type": "shell",
-      "command": "uv run python scripts/dev.py all --addon ai_flashcards --with-vendor",
+      "command": "uv run python scripts/dev.py all --with-vendor",
       "options": {
         "cwd": "${workspaceFolder}"
       },

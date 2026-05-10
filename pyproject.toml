@@ -3,8 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "anki-add-ons"
+name = "ai-flashcards"
 version = "0.1.0"
+description = "AI Flashcards — Anki add-on (source repository)."
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
   "anki>=25.9.2",
@@ -13,10 +15,14 @@ dependencies = [
   "python-dotenv>=1.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/leonvo1109/ai-flashcards"
+
 [tool.hatch.envs.default]
 skip-install = true
 dependencies = [
   "black",
+  "pytest>=8.3",
   "ruff",
   "mypy"
 ]
@@ -24,11 +30,11 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 vendor = "python scripts/vendor_dependencies.py"
 build = "python scripts/build_all.py --skip-vendor"
-install-dev = "python scripts/install_dev.py --addon ai_flashcards"
+install-dev = "python scripts/install_dev.py"
 run-anki = "python runanki.py"
 dev = "python scripts/dev.py all"
-dev-build = "python scripts/dev.py build --addon ai_flashcards --skip-vendor"
-dev-install = "python scripts/dev.py install --addon ai_flashcards"
+dev-build = "python scripts/dev.py build --skip-vendor"
+dev-install = "python scripts/dev.py install"
 fmt = [
   "black .",
   "ruff check --fix ."
@@ -36,12 +42,26 @@ fmt = [
 check = [
   "black --check .",
   "ruff check .",
-  "mypy ."
+  "mypy scripts",
+]
+test = "pytest {args}"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
 ]
 
 [tool.uv]
 package = false
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+# Vendored wheels live under ai_flashcards/lib/ (helps when running broader `mypy` locally).
+exclude = "ai_flashcards/lib/"
+
 [tool.ruff.lint.per-file-ignores]
 # Vendored / dynamic Apple Intelligence SDK shim uses star-imports until typed.
-"packages/ai_flashcards/llm/providers/apple_provider.py" = ["F403", "F405"]
+"ai_flashcards/llm/providers/apple_provider.py" = ["F403", "F405"]

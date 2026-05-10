@@ -2,11 +2,37 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "pytest (all)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${workspaceFolder}/tests", "-v"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "AI_FLASHCARDS_LITE_IMPORT": "1"
+      }
+    },
+    {
+      "name": "pytest (current file)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "AI_FLASHCARDS_LITE_IMPORT": "1"
+      }
+    },
+    {
       "name": "Run Anki (AI Flashcards dev loop)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/scripts/dev.py",
-      "args": ["all", "--addon", "ai_flashcards"],
+      "args": ["all"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false
@@ -16,7 +42,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/scripts/dev.py",
-      "args": ["all", "--addon", "ai_flashcards", "--with-vendor"],
+      "args": ["all", "--with-vendor"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false

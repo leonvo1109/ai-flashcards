@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified local development entrypoint for this monorepo."""
+"""Local development entrypoint for AI Flashcards."""
 
 from __future__ import annotations
 
@@ -21,16 +21,12 @@ def run(cmd: list[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Easy dev workflow: build/install/run Anki add-ons."
+        description="Easy dev workflow: build/install/run AI Flashcards."
     )
     parser.add_argument(
         "action",
         choices=["build", "install", "run", "all"],
         help="'all' = build -> install -> run",
-    )
-    parser.add_argument(
-        "--addon",
-        help="Target one add-on, e.g. ai_flashcards (for build/install).",
     )
     parser.add_argument(
         "--skip-vendor",
@@ -51,8 +47,6 @@ def main() -> None:
 
     if args.action in {"build", "all"}:
         cmd = [py, str(BUILD_SCRIPT)]
-        if args.addon:
-            cmd.extend(["--addon", args.addon])
         should_skip_vendor = args.skip_vendor or not args.with_vendor
         if should_skip_vendor:
             cmd.append("--skip-vendor")
@@ -60,8 +54,6 @@ def main() -> None:
 
     if args.action in {"install", "all"}:
         cmd = [py, str(INSTALL_SCRIPT)]
-        if args.addon:
-            cmd.extend(["--addon", args.addon])
         if args.action == "all":
             cmd.append("--skip-build")
         if args.with_vendor:

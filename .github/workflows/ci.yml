@@ -1,4 +1,4 @@
-name: Build Anki Add-ons
+name: Build AI Flashcards
 
 on:
   push:
@@ -18,13 +18,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build add-ons
+      - name: Install tooling
+        run: pip install pytest
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Build add-on
         run: python scripts/build_all.py
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: anki-addons
+          name: ai-flashcards
           path: build/*.ankiaddon
           if-no-files-found: error
-

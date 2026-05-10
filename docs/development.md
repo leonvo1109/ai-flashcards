@@ -5,9 +5,9 @@
 ```bash
 uv sync
 uv run hatch run dev-build     # build ai_flashcards
-uv run hatch run dev-install   # install ai_flashcards into Anki addons21
+uv run hatch run dev-install   # install into Anki addons21
 # or one-shot:
-uv run hatch run install-dev   # build + install all addons via install script
+uv run hatch run install-dev   # build + install via install script
 ```
 
 Restart Anki to load changes.
@@ -21,13 +21,13 @@ uv run hatch run run-anki
 Unified CLI (without Hatch wrappers):
 
 ```bash
-python scripts/dev.py all --addon ai_flashcards
-python scripts/dev.py build --addon ai_flashcards --skip-vendor
+python scripts/dev.py all
+python scripts/dev.py build --skip-vendor
 ```
 
 By default, the dev loop skips vendoring for speed.
 
-**What gets bundled:** the `.ankiaddon` zip includes whatever is under `packages/ai_flashcards/lib/`. That folder is gitignored, so it is produced by vendoring.
+**What gets bundled:** the `.ankiaddon` zip includes whatever is under `ai_flashcards/lib/`. That folder is gitignored, so it is produced by vendoring.
 
 | Dependency | In `lib/` when |
 |------------|----------------|
@@ -38,7 +38,7 @@ Overrides: `ANKI_VENDOR_APPLE_FM=1` (try Apple deps off-macOS, unsupported), `AN
 
 Use `--with-vendor` when you need to refresh `lib/` (e.g. before sharing a build that must include Apple support from your machine).
 
-Build output: `build/<addon_name>.ankiaddon`.
+Build output: `build/ai_flashcards.ankiaddon`.
 
 ## Format and lint
 
@@ -59,7 +59,7 @@ cp .env.example .env
 
 | Variable | Used for |
 |----------|-----------|
-| `GOOGLE_API_KEY` | Gemini when `gemini_api_key` in add-on config is empty ([`GoogleProvider`](../packages/ai_flashcards/llm/providers/google_provider.py)) |
+| `GOOGLE_API_KEY` | Gemini when `gemini_api_key` in add-on config is empty ([`GoogleProvider`](../ai_flashcards/llm/providers/google_provider.py)) |
 
 Running Anki from the repo (if you use `runanki.py`), load env first, e.g.:
 
@@ -71,7 +71,7 @@ set -a && source .env && set +a && uv run python runanki.py
 
 ## Vendoring runtime deps into the add-on
 
-Some dependencies are bundled under `packages/ai_flashcards/lib/` for distribution:
+Some dependencies are bundled under `ai_flashcards/lib/` for distribution:
 
 ```bash
 uv run hatch run vendor
@@ -80,5 +80,5 @@ uv run hatch run vendor
 ## Optional: rebuild on save (Linux example)
 
 ```bash
-while inotifywait -e modify packages/ai_flashcards/*.py; do uv run hatch run install-dev; done
+while inotifywait -e modify ai_flashcards/*.py; do uv run hatch run install-dev; done
 ```

@@ -6,7 +6,7 @@ import sys
 import argparse
 
 ROOT = Path(__file__).resolve().parent.parent
-PACKAGES_DIR = ROOT / "packages"
+ADDON_DIR = ROOT / "ai_flashcards"
 BUILD_DIR = ROOT / "build"
 
 EXCLUDE_DIRS = {
@@ -76,10 +76,8 @@ def vendor_dependencies() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build .ankiaddon archives from packages/")
-    parser.add_argument(
-        "--addon",
-        help="Build only one add-on (folder name under packages/), e.g. ai_flashcards",
+    parser = argparse.ArgumentParser(
+        description="Build the AI Flashcards .ankiaddon archive from ai_flashcards/"
     )
     parser.add_argument(
         "--skip-vendor",
@@ -87,16 +85,6 @@ def parse_args() -> argparse.Namespace:
         help="Skip vendoring runtime dependencies before building.",
     )
     return parser.parse_args()
-
-
-def iter_packages(addon: str | None) -> list[Path]:
-    packages = sorted(p for p in PACKAGES_DIR.iterdir() if p.is_dir())
-    if addon is None:
-        return packages
-    filtered = [p for p in packages if p.name == addon]
-    if not filtered:
-        raise SystemExit(f"Unknown add-on: {addon!r}. Available: {', '.join(p.name for p in packages)}")
-    return filtered
 
 
 def build_package(pkg_dir: Path) -> None:
@@ -124,26 +112,24 @@ def main() -> None:
     args = parse_args()
     BUILD_DIR.mkdir(exist_ok=True)
 
+    if not ADDON_DIR.is_dir():
+        raise SystemExit(f"Add-on source directory missing: {ADDON_DIR}")
+
     if not args.skip_vendor:
         vendor_dependencies()
     else:
         print("Skipping vendoring (--skip-vendor).")
 
-    print("\nBuilding add-ons...\n")
-    has_errors = False
+    print("\nBuilding add-on...\n")
 
-    for pkg_dir in iter_packages(args.addon):
-        validation_errors = validate_package(pkg_dir)
-        if validation_errors:
-            has_errors = True
-            print(f"Invalid package: {pkg_dir.name}")
-            for err in validation_errors:
-                print(f"  - {err}")
-            continue
-        build_package(pkg_dir)
-
-    if has_errors:
+    validation_errors = validate_package(ADDON_DIR)
+    if validation_errors:
+        print(f"Invalid package: {ADDON_DIR.name}")
+        for err in validation_errors:
+            print(f"  - {err}")
         raise SystemExit("Build failed due to package validation errors.")
+
+    build_package(ADDON_DIR)
 
 
 if __name__ == "__main__":

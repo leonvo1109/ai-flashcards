@@ -49,7 +49,7 @@ Example (Apple): set `"provider": "apple"`; key not required.
 | `tag_system.py` / `card_hierarchy.py` | JSON sidecar data |
 | `llm/` | Provider factory and implementations |
 
-## Build from monorepo root
+## Build from repository root
 
 ```bash
 uv run hatch run install-dev

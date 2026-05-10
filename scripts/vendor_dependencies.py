@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vendors runtime dependencies for each add-on into its lib/ directory.
+Vendors runtime dependencies into ai_flashcards/lib/.
 Uses Anki's Python for ABI compatibility.
 """
 
@@ -11,7 +11,7 @@ import platform
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PACKAGES_DIR = ROOT / "packages"
+ADDON_DIR = ROOT / "ai_flashcards"
 
 
 def find_anki_python() -> str:
@@ -59,7 +59,7 @@ def _pip_install_target(
 
 
 def vendor_addon(addon_dir: Path) -> bool:
-    """Vendor dependencies for a single add-on.
+    """Vendor dependencies for the add-on.
 
     Cross-platform libs come from ``requirements-runtime.txt`` (currently ``google-genai``).
 
@@ -121,16 +121,13 @@ def vendor_addon(addon_dir: Path) -> bool:
 def main():
     print("Vendoring runtime dependencies...\n")
 
-    has_errors = False
+    if not ADDON_DIR.is_dir():
+        sys.exit(f"Add-on directory not found: {ADDON_DIR}")
 
-    for addon_dir in sorted(p for p in PACKAGES_DIR.iterdir() if p.is_dir()):
-        if not vendor_addon(addon_dir):
-            has_errors = True
+    if not vendor_addon(ADDON_DIR):
+        sys.exit("Dependency vendoring failed.")
 
-    if has_errors:
-        sys.exit("Some add-ons failed to vendor dependencies.")
-
-    print("\nAll dependencies vendored successfully!")
+    print("\nDependencies vendored successfully!")
 
 
 if __name__ == "__main__":
