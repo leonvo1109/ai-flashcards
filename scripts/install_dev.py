@@ -36,10 +36,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Assume build artifacts already exist and do not invoke build script.",
     )
+    parser.add_argument(
+        "--with-vendor",
+        action="store_true",
+        help="When build runs, include dependency vendoring (default: skip for faster/more reliable dev loop).",
+    )
     return parser.parse_args()
 
 
-def install_addon(addon: str | None, skip_build: bool) -> None:
+def install_addon(addon: str | None, skip_build: bool, with_vendor: bool) -> None:
     system = sys.platform
     addons_dir = ANKI_ADDONS_DIRS.get(system)
 
@@ -54,7 +59,12 @@ def install_addon(addon: str | None, skip_build: bool) -> None:
 
     if not skip_build:
         print(f"Building fresh addons via: {BUILD_SCRIPT}")
-        subprocess.run([sys.executable, str(BUILD_SCRIPT)], check=True)
+        build_cmd = [sys.executable, str(BUILD_SCRIPT)]
+        if addon:
+            build_cmd.extend(["--addon", addon])
+        if not with_vendor:
+            build_cmd.append("--skip-vendor")
+        subprocess.run(build_cmd, check=True)
     else:
         print("Skipping build (--skip-build).")
 
@@ -90,7 +100,12 @@ def install_addon(addon: str | None, skip_build: bool) -> None:
             # 2. Altes Add-on nur jetzt ersetzen (wenn neues valide ist)
             if addon_dir.exists():
                 print(f"  Removing old: {addon_dir}")
-                shutil.rmtree(addon_dir)
+                try:
+                    shutil.rmtree(addon_dir)
+                except PermissionError as exc:
+                    print(f"  ✗ Could not replace existing add-on: {exc}")
+                    print("  Close Anki completely and retry install.")
+                    sys.exit(1)
 
             # 3. Neues Add-on installieren
             print(f"  Moving to: {addon_dir}")
@@ -103,4 +118,4 @@ def install_addon(addon: str | None, skip_build: bool) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    install_addon(args.addon, args.skip_build)
+    install_addon(args.addon, args.skip_build, args.with_vendor)

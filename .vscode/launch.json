@@ -10,6 +10,16 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "Run Anki (with vendoring)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/dev.py",
+      "args": ["all", "--addon", "ai_flashcards", "--with-vendor"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }

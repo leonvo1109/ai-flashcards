@@ -18,6 +18,20 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Anki: Build + Install + Run (with vendoring)",
+      "type": "shell",
+      "command": "uv run python scripts/dev.py all --addon ai_flashcards --with-vendor",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
     }
   ]
 }

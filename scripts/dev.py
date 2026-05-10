@@ -37,6 +37,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip vendoring dependencies during build.",
     )
+    parser.add_argument(
+        "--with-vendor",
+        action="store_true",
+        help="Include vendoring dependencies during build/install (default is skip in dev).",
+    )
     return parser.parse_args()
 
 
@@ -48,7 +53,8 @@ def main() -> None:
         cmd = [py, str(BUILD_SCRIPT)]
         if args.addon:
             cmd.extend(["--addon", args.addon])
-        if args.skip_vendor:
+        should_skip_vendor = args.skip_vendor or not args.with_vendor
+        if should_skip_vendor:
             cmd.append("--skip-vendor")
         run(cmd)
 
@@ -58,6 +64,8 @@ def main() -> None:
             cmd.extend(["--addon", args.addon])
         if args.action == "all":
             cmd.append("--skip-build")
+        if args.with_vendor:
+            cmd.append("--with-vendor")
         run(cmd)
 
     if args.action in {"run", "all"}:
