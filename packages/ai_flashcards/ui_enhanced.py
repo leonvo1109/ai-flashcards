@@ -9,6 +9,7 @@ from typing import cast
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -162,7 +163,9 @@ class CardSelector:
         if list_widget.count() > 0:
             first = list_widget.item(0)
             if first.flags() & Qt.ItemFlag.ItemIsSelectable:
-                list_widget.setCurrentRow(0)
+                list_widget.clearSelection()
+                first.setSelected(True)
+                list_widget.setCurrentItem(first)
                 cid0 = first.data(Qt.ItemDataRole.UserRole)
                 self.selected_card_id = int(cid0) if cid0 is not None else None
             else:
@@ -182,18 +185,44 @@ class CardSelector:
         ids = AnkiService.get_recent_cards(limit) if mw.col else []
         self.fill_card_list_widget(list_widget, ids)
 
+    def get_selected_cards_from_list(self, list_widget: QListWidget) -> list[CardInfo]:
+        """All selected rows with valid card ids, sorted by row order."""
+        paired: list[tuple[int, QListWidgetItem]] = []
+        for it in list_widget.selectedItems():
+            row = list_widget.row(it)
+            paired.append((row, it))
+        paired.sort(key=lambda x: x[0])
+        out: list[CardInfo] = []
+        for _row, item in paired:
+            cid = item.data(Qt.ItemDataRole.UserRole)
+            if cid is None:
+                continue
+            info = AnkiService.get_card_by_id(int(cid))
+            if info:
+                out.append(info)
+        return out
+
     def get_selected_card_from_list(self, list_widget: QListWidget) -> CardInfo | None:
+        """Prefer the current focused row when it is selected; otherwise first selection."""
         item = list_widget.currentItem()
-        if item is None:
-            sel = list_widget.selectedItems()
-            item = sel[0] if sel else None
-        if item is None:
+        if item is not None and item.flags() & Qt.ItemFlag.ItemIsSelectable:
+            cid = item.data(Qt.ItemDataRole.UserRole)
+            if cid is not None and item.isSelected():
+                self.selected_card_id = int(cid)
+                return AnkiService.get_card_by_id(int(cid))
+        sel = list_widget.selectedItems()
+        if not sel:
+            self.selected_card_id = None
             return None
-        cid = item.data(Qt.ItemDataRole.UserRole)
-        if cid is None:
-            return None
-        self.selected_card_id = int(cid)
-        return AnkiService.get_card_by_id(int(cid))
+        sel.sort(key=lambda i: list_widget.row(i))
+        for item in sel:
+            cid = item.data(Qt.ItemDataRole.UserRole)
+            if cid is None:
+                continue
+            self.selected_card_id = int(cid)
+            return AnkiService.get_card_by_id(int(cid))
+        self.selected_card_id = None
+        return None
 
 
 class EnhancedUI:
@@ -372,7 +401,7 @@ class EnhancedUI:
         pick_layout_outer.addLayout(search_row)
 
         card_list = QListWidget()
-        card_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        card_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         card_list.setMinimumHeight(260)
         pick_layout_outer.addWidget(card_list)
 
@@ -489,7 +518,9 @@ class EnhancedUI:
         layout.addWidget(pick_wrap)
         layout.addWidget(
             QLabel(
-                "Select one row in the list above. Tabs «Verify» and «Create variants» use that card."
+                "Select card(s) in the list above (⇧ / Ctrl ⌘ multi-select). "
+                "«Verify» runs on every selected unchecked card; "
+                "«Create variants» uses one card — see that tab."
             )
         )
 
@@ -588,6 +619,12 @@ class EnhancedUI:
 
     def _quick_verify(self, card: CardInfo, parent_dialog: QDialog) -> None:
         """Quickly verify the given card."""
+        if self.tag_manager and self.tag_manager.is_ai_verified(card.tags):
+            showInfo(
+                "This note is already tagged ai_verified. "
+                "Remove that tag if you want to run AI verification again."
+            )
+            return
 
         async def do_verify():
             try:
@@ -650,19 +687,31 @@ class EnhancedUI:
         asyncio.run(do_variants())
 
     def _create_verify_tab(
-        self, parent_dialog: QDialog, card_list: QListWidget
+        self, _parent_dialog: QDialog, card_list: QListWidget
     ) -> QWidget:
-        """Create the verify card tab."""
+        """Verify one card or batch; skip already ai_verified with hints."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        layout.addWidget(QLabel("Verify the selected card:"))
+        layout.addWidget(
+            QLabel(
+                "Multi-select cards in the list above (⇧ / Ctrl ⌘ click), "
+                "or a single row. Already-verified rows are skipped with a summary."
+            )
+        )
+
+        verify_hint = QLabel("")
+        verify_hint.setWordWrap(True)
+        verify_hint.setStyleSheet("color: #555;")
+        layout.addWidget(verify_hint)
+
+        layout.addWidget(QLabel("Selection preview"))
 
         card_display = QTextEdit()
         card_display.setReadOnly(True)
-        layout.addWidget(QLabel("Card Content:"))
         layout.addWidget(card_display)
 
+        btn_row = QHBoxLayout()
         verify_button = QPushButton("Verify with AI")
         verify_button.setAutoDefault(False)
         verify_button.setDefault(False)
@@ -670,12 +719,113 @@ class EnhancedUI:
             "background-color: #4CAF50; color: white; font-weight: bold;"
         )
 
-        async def verify_card():
-            card = self.card_selector.get_selected_card_from_list(card_list)
-            if not card:
-                showWarning(
-                    "Please select a card in the list at the top of this window."
+        clear_verify_btn = QPushButton("Clear AI verify markers")
+        clear_verify_btn.setAutoDefault(False)
+        clear_verify_btn.setDefault(False)
+        clear_verify_btn.setToolTip(
+            "Removes ai_verified and ai_single_info from the notes tied to "
+            "the selected cards (one update per shared note)."
+        )
+
+        btn_row.addWidget(verify_button)
+        btn_row.addWidget(clear_verify_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        results_display = QTextEdit()
+        results_display.setReadOnly(True)
+        layout.addWidget(QLabel("Results"))
+        layout.addWidget(results_display)
+
+        self.state.text_fields["verify_results"] = results_display
+
+        tm = self.tag_manager
+
+        def update_verify_hint() -> None:
+            if tm is None:
+                verify_hint.clear()
+                return
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                verify_hint.clear()
+                return
+            n_all = len(cards_sel)
+            n_skip = sum(1 for c in cards_sel if tm.is_ai_verified(c.tags))
+            if n_all == 1:
+                if n_skip:
+                    verify_hint.setText(
+                        "This card is already tagged ai_verified. "
+                        "Use «Clear AI verify markers» or remove that tag "
+                        "in Browse to verify again."
+                    )
+                else:
+                    verify_hint.clear()
+            elif n_skip:
+                verify_hint.setText(
+                    f"{n_skip} of {n_all} selected cards are already ai_verified — "
+                    "they will be skipped. Remaining cards run top-to-bottom."
                 )
+            else:
+                verify_hint.setText(
+                    f"{n_all} cards selected — verification runs one after another."
+                )
+
+        def update_card_display() -> None:
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                card_display.clear()
+            elif len(cards_sel) == 1:
+                c = cards_sel[0]
+                card_display.setText(
+                    f"Front:\n{c.front}\n\nBack:\n{c.back}\n\n"
+                    f"Deck: {c.deck_name}\nTags: {', '.join(c.tags)}"
+                )
+            else:
+                lines = [f"{len(cards_sel)} cards selected:\n"]
+                for c in cards_sel[:15]:
+                    leaf = c.deck_name.split("::")[-1] if c.deck_name else "?"
+                    snip = c.front.replace("\n", " ")
+                    snip = f"{snip[:70]}…" if len(snip) > 72 else snip
+                    flagged = (
+                        "  [already ai_verified]"
+                        if tm and tm.is_ai_verified(c.tags)
+                        else ""
+                    )
+                    lines.append(f"• #{c.card_id}{flagged}  {leaf}  —  {snip}")
+                if len(cards_sel) > 15:
+                    lines.append(f"… +{len(cards_sel) - 15} more")
+                card_display.setText("\n".join(lines))
+            update_verify_hint()
+
+        async def verify_selected() -> None:
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                showWarning(
+                    "Select one or more cards in the list at the top of this dialog."
+                )
+                return
+
+            skipped = (
+                [c for c in cards_sel if tm and tm.is_ai_verified(c.tags)] if tm else []
+            )
+            todo = (
+                [c for c in cards_sel if tm and not tm.is_ai_verified(c.tags)]
+                if tm
+                else list(cards_sel)
+            )
+            prelude_parts: list[str] = []
+            if skipped:
+                prelude_parts.append(
+                    "Skipped (already ai_verified): "
+                    + ", ".join(f"#{c.card_id}" for c in skipped)
+                )
+            if not todo:
+                msg = ""
+                if prelude_parts:
+                    msg += prelude_parts[0] + "\n\n"
+                msg += "Nothing left to verify — clear markers or choose other rows."
+                results_display.setText(msg.strip())
+                update_card_display()
                 return
 
             try:
@@ -683,41 +833,56 @@ class EnhancedUI:
                 provider = build_provider(config)
                 service = CardVerificationService(provider)
 
-                deck_context = AnkiService.get_deck_context(card.deck_name)
-
                 verify_button.setEnabled(False)
-                verify_button.setText("Verifying...")
-
-                result = await service.verify_card(card.front, card.back, deck_context)
+                blocks: list[str] = []
+                for idx, card in enumerate(todo, start=1):
+                    verify_button.setText(f"Verifying {idx}/{len(todo)}…")
+                    QApplication.processEvents()
+                    deck_context = AnkiService.get_deck_context(card.deck_name)
+                    result = await service.verify_card(
+                        card.front, card.back, deck_context
+                    )
+                    block = self._verification_result_block(card, result)
+                    leaf = card.deck_name.split("::")[-1] if card.deck_name else "?"
+                    blocks.append(f"━━━ #{card.card_id} · {leaf} ━━━\n{block.rstrip()}")
 
                 verify_button.setText("Verify with AI")
                 verify_button.setEnabled(True)
 
-                self._show_verification_results(parent_dialog, result, card)
-
+                summary = f"Done: verified {len(todo)}, skipped {len(skipped)}.\n"
+                prelude = ""
+                if prelude_parts:
+                    prelude = prelude_parts[0] + "\n\n"
+                results_display.setText(
+                    prelude + summary + "\n" + ("\n\n".join(blocks))
+                )
+                update_card_display()
             except Exception as exc:
                 verify_button.setText("Verify with AI")
                 verify_button.setEnabled(True)
                 showWarning(f"Verification failed:\n{exc}\n\n{traceback.format_exc()}")
 
-        verify_button.clicked.connect(lambda: asyncio.run(verify_card()))
-        layout.addWidget(verify_button)
+        verify_button.clicked.connect(lambda: asyncio.run(verify_selected()))
 
-        results_display = QTextEdit()
-        results_display.setReadOnly(True)
-        layout.addWidget(QLabel("Results:"))
-        layout.addWidget(results_display)
-
-        self.state.text_fields["verify_results"] = results_display
-
-        def update_card_display():
-            card = self.card_selector.get_selected_card_from_list(card_list)
-            if card:
-                card_display.setText(
-                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\nDeck: {card.deck_name}\nTags: {', '.join(card.tags)}"
-                )
+        def clear_markers() -> None:
+            if tm is None:
+                return
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                showWarning("Select at least one card to clear markers on its note(s).")
+                return
+            to_strip = tm.tags_removed_when_resetting_ai_verification()
+            n_notes = AnkiService.remove_tags_from_notes_for_cards(
+                [c.card_id for c in cards_sel],
+                to_strip,
+            )
+            if n_notes:
+                showInfo(f"Removed {', '.join(to_strip)} from {n_notes} note(s).")
             else:
-                card_display.clear()
+                showInfo("Those notes did not carry those tags (nothing removed).")
+            update_card_display()
+
+        clear_verify_btn.clicked.connect(clear_markers)
 
         card_list.currentRowChanged.connect(lambda _row: update_card_display())
         card_list.itemSelectionChanged.connect(update_card_display)
@@ -732,11 +897,16 @@ class EnhancedUI:
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        layout.addWidget(QLabel("Generate multiple card types from the selected card:"))
+        layout.addWidget(
+            QLabel(
+                "Generate variant card types from one card "
+                "(if several rows are highlighted, the focused or first selection is used):"
+            )
+        )
 
         card_display = QTextEdit()
         card_display.setReadOnly(True)
-        layout.addWidget(QLabel("Original Card:"))
+        layout.addWidget(QLabel("Card to use"))
         layout.addWidget(card_display)
 
         generate_button = QPushButton("Generate Card Types")
@@ -789,10 +959,19 @@ class EnhancedUI:
         self.state.text_fields["multi_type_results"] = results_display
 
         def update_card_display():
+            all_sel = self.card_selector.get_selected_cards_from_list(card_list)
             card = self.card_selector.get_selected_card_from_list(card_list)
-            if card:
+            if card and len(all_sel) > 1:
                 card_display.setText(
-                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\nDeck: {card.deck_name}"
+                    f"Using 1 of {len(all_sel)} selected cards "
+                    "(focused row, else first selected):\n\n"
+                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\n"
+                    f"Deck: {card.deck_name}"
+                )
+            elif card:
+                card_display.setText(
+                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\n"
+                    f"Deck: {card.deck_name}"
                 )
             else:
                 card_display.clear()
@@ -1136,10 +1315,8 @@ class EnhancedUI:
             )
         return cards
 
-    def _show_verification_results(
-        self, parent: QDialog, verification, card: CardInfo
-    ) -> None:
-        """Show card verification results."""
+    def _verification_result_block(self, card: CardInfo, verification) -> str:
+        """Apply tags / split suggestions from one verification pass; return summary text."""
         result_text = ""
 
         if verification.is_valid:
@@ -1166,9 +1343,12 @@ class EnhancedUI:
                     result_text += f"   Front: {improvement.get('front', '')}\n"
                     result_text += f"   Back: {improvement.get('back', '')}\n"
             elif not imp:
-                result_text += "\n(No automatic split suggestions returned — try again or edit manually.)\n"
+                result_text += (
+                    "\n(No automatic split suggestions returned — "
+                    "try again or edit manually.)\n"
+                )
 
-        self.state.text_fields["verify_results"].setText(result_text)
+        return result_text
 
     def _show_multi_type_results(
         self, parent: QDialog, multi_cards: MultiTypeCards, original_card: CardInfo

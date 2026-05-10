@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any, Optional
 
 from anki.decks import DeckId
@@ -465,6 +466,39 @@ class AnkiService:
         except Exception as e:
             print(f"Error adding tags: {e}")
             return False
+
+    @staticmethod
+    def remove_tags_from_notes_for_cards(
+        card_ids: Iterable[int],
+        tags_to_remove: list[str],
+    ) -> int:
+        """Strip tags from every note reachable from the card ids.
+
+        Notes shared by multiple selected cards are updated once.
+        Returns how many notes were modified.
+        """
+        if not mw.col or not tags_to_remove:
+            return 0
+        rm = frozenset(tags_to_remove)
+        nids: set[int] = set()
+        for cid in card_ids:
+            try:
+                nids.add(int(mw.col.get_card(cid).nid))
+            except Exception:
+                continue
+        changed = 0
+        for nid in nids:
+            try:
+                note = mw.col.get_note(nid)
+                new_tags = [t for t in note.tags if t not in rm]
+                if len(new_tags) == len(note.tags):
+                    continue
+                note.tags = new_tags
+                mw.col.update_note(note)
+                changed += 1
+            except Exception as e:
+                print(f"[AI Flashcards] remove_tags note {nid}: {e}")
+        return changed
 
     @staticmethod
     def get_deck_context(deck_name: str) -> dict[str, Any]:

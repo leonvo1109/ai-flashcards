@@ -95,6 +95,14 @@ class TagManager:
             return ["ai_verified", "ai_single_info"]
         return ["ai_needs_review"]
 
+    def is_ai_verified(self, note_tags: list[str]) -> bool:
+        """True when this note is already tagged as AI-verified."""
+        return "ai_verified" in note_tags
+
+    def tags_removed_when_resetting_ai_verification(self) -> list[str]:
+        """Tags stripped by Clear AI verification markers (allows re-running verify)."""
+        return ["ai_verified", "ai_single_info"]
+
     def get_generation_tags(
         self, source_type: str, is_verified: bool = False, is_variant: bool = False
     ) -> list[str]:
