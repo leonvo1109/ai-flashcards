@@ -1,2 +1,3 @@
 # Bundled into add-on lib/ on all platforms (CI + macOS/Linux).
 google-genai
+nest-asyncio>=1.6.0

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from typing import Any, Optional
+
+from anki.decks import DeckId
 from aqt import mw
 
 
@@ -31,6 +33,19 @@ class AnkiService:
     """Service for accessing Anki data."""
 
     @staticmethod
+    def deck_name_for_did(deck_id: int | None) -> str:
+        """Resolve deck name from a card's deck id (modern col.decks API)."""
+        if not mw.col or deck_id is None:
+            return ""
+        try:
+            d = mw.col.decks.get_legacy(DeckId(int(deck_id)))
+            if d:
+                return str(d.get("name") or "")
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
     def get_last_card() -> Optional[CardInfo]:
         """Get the last added or viewed card from the current deck."""
         if not mw.col:
@@ -52,7 +67,7 @@ class AnkiService:
                 note_id=note.id,
                 front=note["Front"] if "Front" in note else "",
                 back=note["Back"] if "Back" in note else "",
-                deck_name=mw.col.get_deck(card.did)["name"],
+                deck_name=AnkiService.deck_name_for_did(card.did),
                 model_name=note.model()["name"],
                 tags=note.tags,
             )
@@ -75,7 +90,7 @@ class AnkiService:
                 note_id=note.id,
                 front=note.get("Front", ""),
                 back=note.get("Back", ""),
-                deck_name=mw.col.get_deck(card.did)["name"],
+                deck_name=AnkiService.deck_name_for_did(card.did),
                 model_name=note.model()["name"],
                 tags=note.tags,
             )
@@ -355,7 +370,7 @@ class AnkiService:
                 note_id=note.id,
                 front=note.get("Front", ""),
                 back=note.get("Back", ""),
-                deck_name=mw.col.get_deck(card.did)["name"],
+                deck_name=AnkiService.deck_name_for_did(card.did),
                 model_name=note.model()["name"],
                 tags=note.tags,
             )
