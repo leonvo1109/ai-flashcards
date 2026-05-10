@@ -1,2 +1,1 @@
-Dieser Ordner ist für benutzerspezifische Dateien gedacht.
-Dateien hier bleiben bei Add-on-Upgrades erhalten.
+User-specific files for this add-on persist here across upgrades.

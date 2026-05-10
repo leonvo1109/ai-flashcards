@@ -59,7 +59,8 @@ ipython_config.py
 
 # Local secrets / env files
 .env
-.env.*
+.env.local
+!.env.example
 *.local
 
 # Project-specific
