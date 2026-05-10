@@ -55,3 +55,8 @@ uv run hatch run install-dev
 ```
 
 Output add-on zip: run `python scripts/build_all.py` → `build/ai_flashcards.ankiaddon`.
+
+### What is inside `lib/` (vendored deps)
+
+- **`google-genai`** is listed in `requirements-runtime.txt` and is vendored on every platform (including CI).
+- **`apple-fm-sdk`** is in `requirements-apple.txt` and is only vendored **on macOS** (Swift toolchain). GitHub Actions builds on Linux therefore ship a working **Google** path; for a distributable build with **Apple** support, run vendoring on a Mac (e.g. `uv run hatch run vendor` or `python scripts/dev.py ... --with-vendor`) before zipping.

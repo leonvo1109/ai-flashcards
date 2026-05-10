@@ -25,6 +25,19 @@ python scripts/dev.py all --addon ai_flashcards
 python scripts/dev.py build --addon ai_flashcards --skip-vendor
 ```
 
+By default, the dev loop skips vendoring for speed.
+
+**What gets bundled:** the `.ankiaddon` zip includes whatever is under `packages/ai_flashcards/lib/`. That folder is gitignored, so it is produced by vendoring.
+
+| Dependency | In `lib/` when |
+|------------|----------------|
+| `google-genai` (`requirements-runtime.txt`) | After any successful vendoring step (including **GitHub Actions CI** on Ubuntu). |
+| `apple-fm-sdk` (`requirements-apple.txt`) | Only when vendoring runs **on macOS** (Swift build). Use `uv run hatch run vendor` locally, or `python scripts/dev.py ... --with-vendor` on a Mac. CI Linux artifacts do **not** include Apple Intelligence bindings. |
+
+Overrides: `ANKI_VENDOR_APPLE_FM=1` (try Apple deps off-macOS, unsupported), `ANKI_SKIP_APPLE_FM=1` (skip Apple on macOS).
+
+Use `--with-vendor` when you need to refresh `lib/` (e.g. before sharing a build that must include Apple support from your machine).
+
 Build output: `build/<addon_name>.ankiaddon`.
 
 ## Format and lint

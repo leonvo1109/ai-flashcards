@@ -1,2 +1,2 @@
-apple-fm-sdk
+# Bundled into add-on lib/ on all platforms (CI + macOS/Linux).
 google-genai
