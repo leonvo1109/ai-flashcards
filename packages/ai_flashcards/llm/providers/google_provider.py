@@ -3,11 +3,14 @@ from google import genai
 from google.genai.types import GenerateContentConfig
 from ..types import AgentRequest, AgentResponse
 
+
 class GoogleProvider:
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash") -> None:
         key = api_key.strip() or os.getenv("GOOGLE_API_KEY", "").strip()
         if not key:
-            raise ValueError("Missing Gemini API key (config.gemini_api_key or GOOGLE_API_KEY).")
+            raise ValueError(
+                "Missing Gemini API key (config.gemini_api_key or GOOGLE_API_KEY)."
+            )
         self._client = genai.Client(api_key=key)
         self._model = model
 

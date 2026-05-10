@@ -19,7 +19,13 @@ def find_anki_python() -> str:
         return env_python
 
     common_paths = [
-        Path.home() / "Library" / "Application Support" / "AnkiProgramFiles" / ".venv" / "bin" / "python",  # macOS Anki
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "AnkiProgramFiles"
+        / ".venv"
+        / "bin"
+        / "python",  # macOS Anki
         Path.home() / ".local" / "share" / "Anki" / ".venv" / "bin" / "python",
         Path.home() / "AppData" / "Local" / "Anki" / ".venv" / "Scripts" / "python.exe",
     ]
@@ -28,7 +34,6 @@ def find_anki_python() -> str:
             return str(path)
 
     return sys.executable
-
 
 
 def vendor_addon(addon_dir: Path) -> bool:
@@ -48,7 +53,17 @@ def vendor_addon(addon_dir: Path) -> bool:
 
     try:
         subprocess.run(
-            [python_exe, "-m", "pip", "install", "--upgrade", "--target", str(lib_dir), "-r", str(requirements)],
+            [
+                python_exe,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--target",
+                str(lib_dir),
+                "-r",
+                str(requirements),
+            ],
             check=True,
             capture_output=True,
             text=True,

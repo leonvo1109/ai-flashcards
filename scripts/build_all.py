@@ -56,22 +56,26 @@ def validate_package(pkg_dir: Path) -> list[str]:
                     "manifest package must match directory name "
                     f"({manifest.get('package')!r} != {pkg_dir.name!r})"
                 )
-            if not isinstance(manifest.get("name"), str) or not manifest["name"].strip():
+            if (
+                not isinstance(manifest.get("name"), str)
+                or not manifest["name"].strip()
+            ):
                 errors.append("manifest name must be a non-empty string")
             if not isinstance(manifest.get("mod"), int):
                 errors.append("manifest mod must be an integer")
 
     return errors
 
+
 def vendor_dependencies():
     """Run vendor_dependencies.py before building."""
     print("Vendoring dependencies...\n")
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "vendor_dependencies.py")],
-        check=False
+        [sys.executable, str(ROOT / "scripts" / "vendor_dependencies.py")], check=False
     )
     if result.returncode != 0:
         raise SystemExit("Dependency vendoring failed.")
+
 
 BUILD_DIR.mkdir(exist_ok=True)
 

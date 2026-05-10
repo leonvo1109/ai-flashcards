@@ -1,5 +1,6 @@
-from dataclasses import  dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
+
 
 @dataclass
 class ToolSpec:
@@ -16,10 +17,12 @@ class AgentRequest:
     temperature: float = 0.2
     max_tokens: int = 800
 
+
 @dataclass
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+
 
 @dataclass
 class AgentResponse:

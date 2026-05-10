@@ -58,7 +58,7 @@ def install_addon() -> None:
             tmp_path = Path(tmpdir) / addon_name
             try:
                 print(f"  Extracting to temporary directory...")
-                with zipfile.ZipFile(addon_file, 'r') as zf:
+                with zipfile.ZipFile(addon_file, "r") as zf:
                     zf.extractall(tmp_path)
                 print(f"  ✓ Extraction successful")
             except Exception as exc:
@@ -82,6 +82,3 @@ def install_addon() -> None:
 
 if __name__ == "__main__":
     install_addon()
-
-
-

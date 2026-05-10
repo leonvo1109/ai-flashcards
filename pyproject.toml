@@ -39,3 +39,7 @@ check = [
 
 [tool.uv]
 package = false
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored / dynamic Apple Intelligence SDK shim uses star-imports until typed.
+"packages/ai_flashcards/llm/providers/apple_provider.py" = ["F403", "F405"]
