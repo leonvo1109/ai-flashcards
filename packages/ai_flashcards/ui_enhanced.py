@@ -6,28 +6,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication,
-    QTextEdit,
-    QPushButton,
+    QAbstractItemView,
     QComboBox,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
     QScrollArea,
-    QWidget,
+    QTextEdit,
     QFileDialog,
     QCheckBox,
-    QTabWidget,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
-    QHBoxLayout,
+    QWidget,
 )
 from aqt import mw
 from aqt.qt import (
     QAction,
-    Qt,
     QDialog,
     QDialogButtonBox,
-    QEventLoop,
     QMenu,
     QTimer,
 )
@@ -53,249 +55,66 @@ class UIState:
 
 
 class CardSelector:
-    """Helper class to handle intelligent card selection with filtering."""
+    """In-dialog card picker: fill a QListWidget with card IDs and resolve selection."""
 
-    def __init__(self, tag_manager: TagManager):
-        self.tag_manager = tag_manager
+    def __init__(self) -> None:
         self.selected_card_id: int | None = None
 
-    def populate_card_list(
-        self, combo: QComboBox, show_ai_generated: bool = True, show_manual: bool = True
+    def fill_card_list_widget(
+        self, list_widget: QListWidget, card_ids: list[int], max_rows: int = 500
     ) -> None:
-        """Populate a combo box with cards, optionally filtered by type."""
-        combo.clear()
-
-        # Wait for mw.col to be ready if not already
-        if not mw.col:
-            combo.addItem("Waiting for Anki to load...")
-            return
-
-        recent_cards = AnkiService.get_recent_cards(200)
-        if not recent_cards:
-            combo.addItem("No cards found - create a card first or use Browse")
-            return
-
-        categories = {"AI Generated": [], "Manual": []}
-
-        for card_id in recent_cards:
-            card = AnkiService.get_card_by_id(card_id)
+        """Populate the embedded card list from card IDs (recent or search results)."""
+        list_widget.blockSignals(True)
+        list_widget.clear()
+        missing = False
+        for cid in card_ids[:max_rows]:
+            card = AnkiService.get_card_by_id(int(cid))
             if not card:
+                missing = True
                 continue
-
-            is_ai_generated = self.tag_manager.filter_ai_generated_cards_from_tags(
-                card.tags
+            label = (
+                f"#{card.card_id}  [{card.deck_name[:28]}]\n "
+                + f"{card.front.replace(chr(10), ' ')[:120]}"
             )
-
-            if is_ai_generated and show_ai_generated:
-                categories["AI Generated"].append((card, card_id))
-            elif not is_ai_generated and show_manual:
-                categories["Manual"].append((card, card_id))
-
-        # Populate with separators
-        found_cards = False
-        for category, cards_list in categories.items():
-            if cards_list:
-                found_cards = True
-                combo.addItem(f"--- {category} ---")
-                combo.model().item(combo.count() - 1).setEnabled(False)
-
-                for card, card_id in cards_list:
-                    display = f"[{card.deck_name}] {card.front[:60]}"
-                    combo.addItem(display, card_id)
-
-        if not found_cards:
-            combo.addItem("No cards match filter - use Browse button")
-
-    def get_selected_card(self, combo: QComboBox) -> CardInfo | None:
-        """Resolve the selected card; skip separator rows with no stored card id."""
-        idx = combo.currentIndex()
-        for j in range(idx, -1, -1):
-            cid = combo.itemData(j)
-            if cid is not None:
-                return AnkiService.get_card_by_id(int(cid))
-        for j in range(combo.count()):
-            cid = combo.itemData(j)
-            if cid is not None:
-                return AnkiService.get_card_by_id(int(cid))
-        return None
-
-    def ensure_combo_valid_card_row(self, combo: QComboBox) -> None:
-        """If the user lands on a category separator, move to the nearest real card."""
-        idx = combo.currentIndex()
-        if combo.itemData(idx) is not None:
-            return
-        new_i: int | None = None
-        for j in range(idx + 1, combo.count()):
-            if combo.itemData(j) is not None:
-                new_i = j
-                break
-        if new_i is None:
-            for j in range(0, idx):
-                if combo.itemData(j) is not None:
-                    new_i = j
-                    break
-        if new_i is None:
-            return
-        combo.blockSignals(True)
-        combo.setCurrentIndex(new_i)
-        combo.blockSignals(False)
-        combo.currentIndexChanged.emit(new_i)
-
-    def browse_for_card(
-        self, combo: QComboBox, parent_widget: QWidget | None = None
-    ) -> bool:
-        """
-        Open Browse and a floating control so selection is explicitly applied.
-
-        Modal parent dialogs swallow focus; hiding them while Browse is shown is still
-        required. The polling loop proved unreliable across platforms; instead we rely
-        on an explicit «Apply selection» action that reads Browser.selected_cards().
-        """
-        try:
-            import aqt
-
-            if parent_widget is not None:
-                parent_widget.hide()
-            QApplication.processEvents()
-
-            browser = aqt.dialogs.open("Browser", mw)
-            if getattr(browser.form, "searchEdit", None) is not None:
-                browser.form.searchEdit.setFocus()
-            browser.raise_()
-            browser.activateWindow()
-            QApplication.processEvents()
-
-            picked_holder: list[bool] = [False]
-            loop = QEventLoop()
-
-            palette = QDialog(mw)
-            palette.setModal(False)
-            palette.setWindowTitle("Browse selection")
-            palette.setWindowFlags(
-                palette.windowFlags()
-                | Qt.WindowType.Tool
-                | Qt.WindowType.WindowStaysOnTopHint
-                | Qt.WindowType.WindowCloseButtonHint
+            it = QListWidgetItem(label)
+            it.setData(Qt.ItemDataRole.UserRole, card.card_id)
+            list_widget.addItem(it)
+        list_widget.blockSignals(False)
+        if list_widget.count() > 0:
+            first = list_widget.item(0)
+            if first.flags() & Qt.ItemFlag.ItemIsSelectable:
+                list_widget.setCurrentRow(0)
+                cid0 = first.data(Qt.ItemDataRole.UserRole)
+                self.selected_card_id = int(cid0) if cid0 is not None else None
+            else:
+                self.selected_card_id = None
+        elif not card_ids:
+            pit = QListWidgetItem("(No cards match — adjust search)")
+            pit.setFlags(pit.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            list_widget.addItem(pit)
+        elif missing:
+            mit = QListWidgetItem(
+                "(Could not load cards — open Anki Browse to check DB)"
             )
+            mit.setFlags(mit.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            list_widget.addItem(mit)
 
-            plat = QVBoxLayout(palette)
-            hint = QLabel(
-                "Choose cards in the Browse window,\n"
-                "then tap «Apply selection» (supports multiple)."
-            )
-            hint.setWordWrap(True)
-            plat.addWidget(hint)
-            status = QLabel("Cards selected: …")
-            plat.addWidget(status)
+    def load_recent_into_list(self, list_widget: QListWidget, limit: int = 300) -> None:
+        ids = AnkiService.get_recent_cards(limit) if mw.col else []
+        self.fill_card_list_widget(list_widget, ids)
 
-            btns = QHBoxLayout()
-
-            MAX_CARDS_APPLY = 80
-
-            def read_selected_ids() -> list[int]:
-                try:
-                    return [int(cid) for cid in browser.selected_cards()]
-                except (RuntimeError, TypeError):
-                    return []
-
-            def refresh_status() -> None:
-                n = len(read_selected_ids())
-                status.setText(
-                    f"Cards selected in Browse: {n} · up to {MAX_CARDS_APPLY} loaded"
-                )
-
-            def apply_into_combo() -> None:
-                cids = read_selected_ids()
-                if not cids:
-                    showWarning(
-                        "No cards selected in Browse.\n\n"
-                        "Click rows in the card table (⌘ / Ctrl‑click for several rows), "
-                        "then tap Apply selection again."
-                    )
-                    refresh_status()
-                    return
-
-                uniq: list[int] = []
-                for cid in cids:
-                    if cid not in uniq:
-                        uniq.append(cid)
-                uniq = uniq[:MAX_CARDS_APPLY]
-
-                combo.blockSignals(True)
-                combo.clear()
-                try:
-                    for cid in uniq:
-                        card_info = AnkiService.get_card_by_id(cid)
-                        if card_info is None:
-                            continue
-                        disp = f"[{card_info.deck_name}] {card_info.front[:60]}"
-                        combo.addItem(disp, cid)
-                finally:
-                    combo.blockSignals(False)
-
-                if combo.count():
-                    combo.setCurrentIndex(0)
-                    combo.currentIndexChanged.emit(0)
-                    self.selected_card_id = int(combo.itemData(0))
-                    picked_holder[0] = True
-                    showInfo(
-                        f"Applied {combo.count()} card(s) into the picker.\n"
-                        "Closing this bar — your AI Flashcards window will return."
-                    )
-                    palette.accept()
-                else:
-                    picked_holder[0] = False
-                    showWarning(
-                        "Could not resolve the selected cards.\n\n"
-                        "Pick rows in Browse’s card list (not only the sidebar), "
-                        "then retry."
-                    )
-
-            def quit_palette() -> None:
-                palette.reject()
-
-            pulse = QTimer(palette)
-
-            pulse.timeout.connect(refresh_status)
-            pulse.start(500)
-            palette.finished.connect(pulse.stop)
-            palette.finished.connect(loop.quit)
-
-            apply_bt = QPushButton("Apply selection")
-            cancel_bt = QPushButton("Cancel")
-            btns.addWidget(apply_bt)
-            btns.addWidget(cancel_bt)
-            plat.addLayout(btns)
-
-            apply_bt.clicked.connect(apply_into_combo)
-            cancel_bt.clicked.connect(quit_palette)
-
-            mw_geom = mw.frameGeometry()
-            palette.adjustSize()
-            ph, pw = palette.height(), palette.width()
-            ax = mw_geom.x() + max(16, (mw_geom.width() - pw) // 2)
-            ay = mw_geom.y() + mw_geom.height() - ph - 60
-            palette.move(ax, max(mw_geom.y() + 24, ay))
-            palette.show()
-            palette.raise_()
-            browser.raise_()
-
-            refresh_status()
-
-            loop.exec()
-            pulse.stop()
-            return picked_holder[0]
-
-        except Exception as e:
-            print(f"[AI Flashcards] Error opening browser: {e}")
-            traceback.print_exc()
-            return False
-        finally:
-            if parent_widget is not None:
-                parent_widget.show()
-                parent_widget.raise_()
-                parent_widget.activateWindow()
-                QApplication.processEvents()
+    def get_selected_card_from_list(self, list_widget: QListWidget) -> CardInfo | None:
+        item = list_widget.currentItem()
+        if item is None:
+            sel = list_widget.selectedItems()
+            item = sel[0] if sel else None
+        if item is None:
+            return None
+        cid = item.data(Qt.ItemDataRole.UserRole)
+        if cid is None:
+            return None
+        self.selected_card_id = int(cid)
+        return AnkiService.get_card_by_id(int(cid))
 
 
 class EnhancedUI:
@@ -324,7 +143,7 @@ class EnhancedUI:
 
         self.tag_manager = TagManager(base)
         self.hierarchy_manager = CardHierarchyManager(base)
-        self.card_selector = CardSelector(self.tag_manager)
+        self.card_selector = CardSelector()
 
     def _log_debug(self, message: str) -> None:
         """Store and print debug info."""
@@ -394,51 +213,76 @@ class EnhancedUI:
 
         layout = QVBoxLayout(dialog)
 
-        # Card selection section with filtering
-        card_layout = QHBoxLayout()
-        card_layout.addWidget(QLabel("Select Card:"))
-
-        card_combo = QComboBox()
-        self.card_selector.populate_card_list(
-            card_combo, show_ai_generated=True, show_manual=True
+        # Embedded card picker (single window — no Browse, no floating helper)
+        pick_layout_outer = QVBoxLayout()
+        pick_layout_outer.addWidget(
+            QLabel("Pick a card here (same window as verify / variants):")
         )
 
-        if card_combo.count() > 0:
-            # Skip separators when setting initial index
-            for i in range(card_combo.count()):
-                if card_combo.itemData(i) is not None:
-                    card_combo.setCurrentIndex(i)
-                    break
-
-        card_layout.addWidget(card_combo)
-
-        refresh_button = QPushButton("Refresh")
-        refresh_button.clicked.connect(
-            lambda: self.card_selector.populate_card_list(card_combo)
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Find:"))
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText(
+            'Anki search, e.g. deck:"Spanish" tag:marked  •  Blank + Search ⇒ recent cards'
         )
-        card_layout.addWidget(refresh_button)
+        search_row.addWidget(search_edit, stretch=1)
+        btn_recent = QPushButton("Recent")
+        btn_search = QPushButton("Search")
+        search_row.addWidget(btn_recent)
+        search_row.addWidget(btn_search)
+        pick_layout_outer.addLayout(search_row)
 
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(
-            lambda: self.card_selector.browse_for_card(card_combo, dialog)
+        card_list = QListWidget()
+        card_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        card_list.setMinimumHeight(260)
+        pick_layout_outer.addWidget(card_list)
+
+        def reload_recent_cards() -> None:
+            search_edit.clear()
+            self.card_selector.load_recent_into_list(card_list, limit=400)
+
+        def run_search_clicked() -> None:
+            if not mw.col:
+                showWarning("Collection not ready.")
+                return
+            q = search_edit.text().strip()
+            if not q:
+                reload_recent_cards()
+                return
+            try:
+                from anki.errors import InvalidInput, SearchError
+
+                ids = mw.col.find_cards(q)
+            except (InvalidInput, SearchError) as e:
+                showWarning(f"Invalid or unsupported search:\n{e}")
+                return
+            except Exception as e:
+                showWarning(f"Search failed:\n{e}")
+                return
+            self.card_selector.fill_card_list_widget(card_list, list(ids))
+
+        btn_recent.clicked.connect(reload_recent_cards)
+        btn_search.clicked.connect(run_search_clicked)
+        reload_recent_cards()
+
+        pick_wrap = QWidget()
+        pick_wrap.setLayout(pick_layout_outer)
+        layout.addWidget(pick_wrap)
+        layout.addWidget(
+            QLabel(
+                "Select one row in the list above. Tabs «Verify» and «Create variants» use that card."
+            )
         )
-        card_layout.addWidget(browse_button)
-
-        card_combo.currentIndexChanged.connect(
-            lambda _i: self.card_selector.ensure_combo_valid_card_row(card_combo)
-        )
-
-        layout.addLayout(card_layout)
 
         # Tab widget for main functions
         tabs = QTabWidget()
 
         # Tab 1: Verify Card
-        verify_tab = self._create_verify_tab(dialog, card_combo)
+        verify_tab = self._create_verify_tab(dialog, card_list)
         tabs.addTab(verify_tab, "1. Verify Card")
 
         # Tab 2: Create Variants
-        multi_type_tab = self._create_multi_type_tab(dialog, card_combo)
+        multi_type_tab = self._create_multi_type_tab(dialog, card_list)
         tabs.addTab(multi_type_tab, "2. Create Variants")
 
         # Tab 3: Generate from Media
@@ -468,7 +312,8 @@ class EnhancedUI:
 
         if not context_card:
             showWarning(
-                "No card context available. Go to the main mode or review a card first, or use the Browse button to select one."
+                "No card context available.\nOpen the main AI Flashcards dialog and "
+                "choose a row in the embedded card list."
             )
             # Open main dialog as fallback
             self.show_main_dialog()
@@ -582,7 +427,7 @@ class EnhancedUI:
         asyncio.run(do_variants())
 
     def _create_verify_tab(
-        self, parent_dialog: QDialog, card_combo: QComboBox
+        self, parent_dialog: QDialog, card_list: QListWidget
     ) -> QWidget:
         """Create the verify card tab."""
         widget = QWidget()
@@ -601,9 +446,11 @@ class EnhancedUI:
         )
 
         async def verify_card():
-            card = self.card_selector.get_selected_card(card_combo)
+            card = self.card_selector.get_selected_card_from_list(card_list)
             if not card:
-                showWarning("Please select a card first")
+                showWarning(
+                    "Please select a card in the list at the top of this window."
+                )
                 return
 
             try:
@@ -639,7 +486,7 @@ class EnhancedUI:
         self.state.text_fields["verify_results"] = results_display
 
         def update_card_display():
-            card = self.card_selector.get_selected_card(card_combo)
+            card = self.card_selector.get_selected_card_from_list(card_list)
             if card:
                 card_display.setText(
                     f"Front:\n{card.front}\n\nBack:\n{card.back}\n\nDeck: {card.deck_name}\nTags: {', '.join(card.tags)}"
@@ -647,13 +494,14 @@ class EnhancedUI:
             else:
                 card_display.clear()
 
-        card_combo.currentIndexChanged.connect(update_card_display)
+        card_list.currentRowChanged.connect(lambda _row: update_card_display())
+        card_list.itemSelectionChanged.connect(update_card_display)
         update_card_display()
 
         return widget
 
     def _create_multi_type_tab(
-        self, parent_dialog: QDialog, card_combo: QComboBox
+        self, parent_dialog: QDialog, card_list: QListWidget
     ) -> QWidget:
         """Create the multi-type card generation tab."""
         widget = QWidget()
@@ -672,9 +520,11 @@ class EnhancedUI:
         )
 
         async def generate_variants():
-            card = self.card_selector.get_selected_card(card_combo)
+            card = self.card_selector.get_selected_card_from_list(card_list)
             if not card:
-                showWarning("Please select a card first")
+                showWarning(
+                    "Please select a card in the list at the top of this window."
+                )
                 return
 
             try:
@@ -712,7 +562,7 @@ class EnhancedUI:
         self.state.text_fields["multi_type_results"] = results_display
 
         def update_card_display():
-            card = self.card_selector.get_selected_card(card_combo)
+            card = self.card_selector.get_selected_card_from_list(card_list)
             if card:
                 card_display.setText(
                     f"Front:\n{card.front}\n\nBack:\n{card.back}\n\nDeck: {card.deck_name}"
@@ -720,7 +570,8 @@ class EnhancedUI:
             else:
                 card_display.clear()
 
-        card_combo.currentIndexChanged.connect(update_card_display)
+        card_list.currentRowChanged.connect(lambda _row: update_card_display())
+        card_list.itemSelectionChanged.connect(update_card_display)
         update_card_display()
 
         return widget

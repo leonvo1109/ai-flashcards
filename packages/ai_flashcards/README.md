@@ -4,7 +4,8 @@ AI-assisted **verification**, **variant** cards, and **generation** from text/me
 
 ## In Anki
 
-**Tools → AI Flashcards** — open the main dialog (verify, variants, create from media).  
+**Tools → AI Flashcards** opens verify / variants / generate-from-media in one window. Choose cards from the **built-in searchable list** (**Recent** or full **Anki search** syntax); you do not need a separate Browse dialog for normal workflows.
+
 Tag/hierarchy metadata is stored beside the profile in `ai_flashcards_tags/` (see `tag_system.py` / `card_hierarchy.py`).
 
 ## Configuration
