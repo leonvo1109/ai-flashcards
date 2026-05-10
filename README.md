@@ -18,10 +18,17 @@ Open the add-on folder README for configuration, menu paths, and source map.
 git clone <your-repo-url>
 cd anki-add-ons
 uv sync
-uv run hatch run install-dev   # build + install into local Anki add-ons folder
+uv run hatch run dev-build
+uv run hatch run dev-install
 ```
 
 Restart Anki after installing.
+
+### One-click inside Cursor
+
+- Open **Run and Debug** and choose `Run Anki (AI Flashcards dev loop)`.
+- Click the green run button.
+- It executes: build -> install -> launch Anki for `ai_flashcards`.
 
 **More detail:** [docs/development.md](docs/development.md) (env vars, manual build, format/lint).
 

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import subprocess
 import zipfile
+import argparse
 from pathlib import Path
 
 ANKI_ADDONS_DIRS = {
@@ -24,7 +25,21 @@ BUILD_DIR = ROOT / "build"
 BUILD_SCRIPT = ROOT / "scripts" / "build_all.py"
 
 
-def install_addon() -> None:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Install built .ankiaddon files into local Anki addons21.")
+    parser.add_argument(
+        "--addon",
+        help="Install only one add-on by name (archive stem), e.g. ai_flashcards",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="Assume build artifacts already exist and do not invoke build script.",
+    )
+    return parser.parse_args()
+
+
+def install_addon(addon: str | None, skip_build: bool) -> None:
     system = sys.platform
     addons_dir = ANKI_ADDONS_DIRS.get(system)
 
@@ -37,12 +52,18 @@ def install_addon() -> None:
         print("Bitte starte zuerst Anki, damit das Verzeichnis erstellt wird.")
         sys.exit(1)
 
-    print(f"Building fresh addons via: {BUILD_SCRIPT}")
-    subprocess.run([sys.executable, str(BUILD_SCRIPT)], check=True)
+    if not skip_build:
+        print(f"Building fresh addons via: {BUILD_SCRIPT}")
+        subprocess.run([sys.executable, str(BUILD_SCRIPT)], check=True)
+    else:
+        print("Skipping build (--skip-build).")
 
     addon_files = sorted(BUILD_DIR.glob("*.ankiaddon"))
+    if addon is not None:
+        addon_files = [f for f in addon_files if f.stem == addon]
     if not addon_files:
-        print(f"No .ankiaddon files found in {BUILD_DIR}")
+        expected = f" for add-on '{addon}'" if addon else ""
+        print(f"No .ankiaddon files found in {BUILD_DIR}{expected}")
         sys.exit(1)
 
     print(f"Installing into Anki addons dir: {addons_dir}")
@@ -81,4 +102,5 @@ def install_addon() -> None:
 
 
 if __name__ == "__main__":
-    install_addon()
+    args = parse_args()
+    install_addon(args.addon, args.skip_build)

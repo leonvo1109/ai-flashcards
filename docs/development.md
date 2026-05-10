@@ -4,16 +4,25 @@
 
 ```bash
 uv sync
-uv run hatch run install-dev   # builds, then installs the .ankiaddon into Anki
+uv run hatch run dev-build     # build ai_flashcards
+uv run hatch run dev-install   # install ai_flashcards into Anki addons21
+# or one-shot:
+uv run hatch run install-dev   # build + install all addons via install script
 ```
 
 Restart Anki to load changes.
 
-Without Hatch:
+Run Anki from the same environment:
 
 ```bash
-python scripts/build_all.py
-python scripts/install_dev.py
+uv run hatch run run-anki
+```
+
+Unified CLI (without Hatch wrappers):
+
+```bash
+python scripts/dev.py all --addon ai_flashcards
+python scripts/dev.py build --addon ai_flashcards --skip-vendor
 ```
 
 Build output: `build/<addon_name>.ankiaddon`.

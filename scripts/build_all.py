@@ -3,6 +3,7 @@ import json
 import zipfile
 import subprocess
 import sys
+import argparse
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES_DIR = ROOT / "packages"
@@ -31,10 +32,7 @@ EXCLUDE_SUFFIXES = {
     ".pyo",
 }
 
-REQUIRED_FILES = {
-    "__init__.py",
-    "manifest.json",
-}
+REQUIRED_FILES = {"__init__.py", "manifest.json"}
 
 
 def validate_package(pkg_dir: Path) -> list[str]:
@@ -67,7 +65,7 @@ def validate_package(pkg_dir: Path) -> list[str]:
     return errors
 
 
-def vendor_dependencies():
+def vendor_dependencies() -> None:
     """Run vendor_dependencies.py before building."""
     print("Vendoring dependencies...\n")
     result = subprocess.run(
@@ -77,32 +75,38 @@ def vendor_dependencies():
         raise SystemExit("Dependency vendoring failed.")
 
 
-BUILD_DIR.mkdir(exist_ok=True)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build .ankiaddon archives from packages/")
+    parser.add_argument(
+        "--addon",
+        help="Build only one add-on (folder name under packages/), e.g. ai_flashcards",
+    )
+    parser.add_argument(
+        "--skip-vendor",
+        action="store_true",
+        help="Skip vendoring runtime dependencies before building.",
+    )
+    return parser.parse_args()
 
-vendor_dependencies()
 
-print("\nBuilding add-ons...\n")
+def iter_packages(addon: str | None) -> list[Path]:
+    packages = sorted(p for p in PACKAGES_DIR.iterdir() if p.is_dir())
+    if addon is None:
+        return packages
+    filtered = [p for p in packages if p.name == addon]
+    if not filtered:
+        raise SystemExit(f"Unknown add-on: {addon!r}. Available: {', '.join(p.name for p in packages)}")
+    return filtered
 
-has_errors = False
 
-for pkg_dir in sorted(p for p in PACKAGES_DIR.iterdir() if p.is_dir()):
-    validation_errors = validate_package(pkg_dir)
-    if validation_errors:
-        has_errors = True
-        print(f"Invalid package: {pkg_dir.name}")
-        for err in validation_errors:
-            print(f"  - {err}")
-        continue
-
+def build_package(pkg_dir: Path) -> None:
     zip_path = BUILD_DIR / f"{pkg_dir.name}.ankiaddon"
-
     if zip_path.exists():
         zip_path.unlink()
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in pkg_dir.rglob("*"):
             rel = path.relative_to(pkg_dir)
-
             if path.is_dir():
                 continue
             if any(part in EXCLUDE_DIRS for part in rel.parts):
@@ -111,10 +115,36 @@ for pkg_dir in sorted(p for p in PACKAGES_DIR.iterdir() if p.is_dir()):
                 continue
             if path.suffix in EXCLUDE_SUFFIXES:
                 continue
-
             zf.write(path, rel.as_posix())
 
     print(f"Built: {zip_path}")
 
-if has_errors:
-    raise SystemExit("Build failed due to package validation errors.")
+
+def main() -> None:
+    args = parse_args()
+    BUILD_DIR.mkdir(exist_ok=True)
+
+    if not args.skip_vendor:
+        vendor_dependencies()
+    else:
+        print("Skipping vendoring (--skip-vendor).")
+
+    print("\nBuilding add-ons...\n")
+    has_errors = False
+
+    for pkg_dir in iter_packages(args.addon):
+        validation_errors = validate_package(pkg_dir)
+        if validation_errors:
+            has_errors = True
+            print(f"Invalid package: {pkg_dir.name}")
+            for err in validation_errors:
+                print(f"  - {err}")
+            continue
+        build_package(pkg_dir)
+
+    if has_errors:
+        raise SystemExit("Build failed due to package validation errors.")
+
+
+if __name__ == "__main__":
+    main()

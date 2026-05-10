@@ -23,10 +23,11 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 vendor = "python scripts/vendor_dependencies.py"
 build = "python scripts/build_all.py"
-install-dev = [
-  "python scripts/build_all.py",
-  "python scripts/install_dev.py"
-]
+install-dev = "python scripts/install_dev.py"
+run-anki = "python runanki.py"
+dev = "python scripts/dev.py all"
+dev-build = "python scripts/dev.py build --addon ai_flashcards"
+dev-install = "python scripts/dev.py install --addon ai_flashcards"
 fmt = [
   "black .",
   "ruff check --fix ."
