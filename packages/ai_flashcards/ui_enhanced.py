@@ -227,7 +227,11 @@ class EnhancedUI:
         )
         search_row.addWidget(search_edit, stretch=1)
         btn_recent = QPushButton("Recent")
+        btn_recent.setAutoDefault(False)
+        btn_recent.setDefault(False)
         btn_search = QPushButton("Search")
+        btn_search.setAutoDefault(False)
+        btn_search.setDefault(False)
         search_row.addWidget(btn_recent)
         search_row.addWidget(btn_search)
         pick_layout_outer.addLayout(search_row)
@@ -259,10 +263,12 @@ class EnhancedUI:
             except Exception as e:
                 showWarning(f"Search failed:\n{e}")
                 return
-            self.card_selector.fill_card_list_widget(card_list, list(ids))
+            id_list = [int(x) for x in ids]
+            self.card_selector.fill_card_list_widget(card_list, id_list)
 
         btn_recent.clicked.connect(reload_recent_cards)
         btn_search.clicked.connect(run_search_clicked)
+        search_edit.returnPressed.connect(run_search_clicked)
         reload_recent_cards()
 
         pick_wrap = QWidget()
@@ -295,6 +301,10 @@ class EnhancedUI:
         buttons = QDialogButtonBox.StandardButton.Close
         button_box = QDialogButtonBox(buttons)
         button_box.rejected.connect(dialog.reject)
+        close_btn = button_box.button(QDialogButtonBox.StandardButton.Close)
+        if close_btn is not None:
+            close_btn.setAutoDefault(False)
+            close_btn.setDefault(False)
         layout.addWidget(button_box)
 
         self.state.dialogs["main"] = dialog
