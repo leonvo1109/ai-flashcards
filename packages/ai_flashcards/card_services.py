@@ -1,6 +1,7 @@
 """Service for verifying and enhancing flashcards using AI."""
 
 import json
+import re
 from dataclasses import dataclass
 
 from .llm.base import LLMProvider
@@ -28,10 +29,79 @@ def _extract_json_fragment_from_llm_text(text: str) -> str:
     """Pull JSON from fenced blocks or trimmed raw JSON."""
     t = text.strip()
     if "```json" in t:
-        return t.split("```json")[1].split("```")[0].strip()
+        inner = t.split("```json", 1)[1]
+        inner = inner.split("```", 1)[0] if "```" in inner else inner
+        return inner.strip()
     if "```" in t:
-        return t.split("```")[1].split("```")[0].strip()
+        inner = t.split("```", 1)[1]
+        inner = inner.split("```", 1)[0] if "```" in inner else inner
+        return inner.strip()
     return t
+
+
+def _repair_common_json_issues(s: str) -> str:
+    """Strip trailing commas that some models emit before ] or }."""
+    s = re.sub(r",\s*]", "]", s)
+    s = re.sub(r",\s*}", "}", s)
+    return s
+
+
+def _parse_json_embedded(fragment: str) -> object | None:
+    """Parse JSON possibly preceded/followed by prose; tolerate minor damage."""
+    s = fragment.strip()
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(s):
+        if ch in "[{":
+            try:
+                obj, _ = decoder.raw_decode(s, i)
+                return obj
+            except json.JSONDecodeError:
+                continue
+
+    repaired = _repair_common_json_issues(s)
+    for i, ch in enumerate(repaired):
+        if ch in "[{":
+            try:
+                obj, _ = decoder.raw_decode(repaired, i)
+                return obj
+            except json.JSONDecodeError:
+                continue
+
+    try:
+        return json.loads(_repair_common_json_issues(s))
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _dict_values_that_look_like_card_payloads(parsed: dict) -> list[dict]:
+    """Handle { \"card_a\": {\"front\": ...}, ... } without a top-level cards array."""
+
+    alias_pairs = (
+        ("front", "back"),
+        ("question", "answer"),
+        ("prompt", "response"),
+        ("q", "a"),
+        ("stem", "answer"),
+    )
+
+    candidates: list[dict] = []
+    for key, val in parsed.items():
+        if key in frozenset(
+            {"cards", "variants", "items", "results", "metadata", "summary", "note"}
+        ):
+            continue
+        if not isinstance(val, dict):
+            continue
+        keys_lower = {str(k).lower() for k in val}
+        matched = False
+        for fk, bk in alias_pairs:
+            if fk in keys_lower and bk in keys_lower:
+                matched = True
+                break
+        if matched:
+            candidates.append(val)
+    return candidates
 
 
 def _coerce_card_object_list(parsed: object) -> list[dict]:
@@ -39,11 +109,36 @@ def _coerce_card_object_list(parsed: object) -> list[dict]:
     if isinstance(parsed, list):
         return [x for x in parsed if isinstance(x, dict)]
     if isinstance(parsed, dict):
-        for key in ("cards", "variants", "items"):
+        for key in ("cards", "variants", "items", "results", "variants_generated"):
             v = parsed.get(key)
             if isinstance(v, list):
-                return [x for x in v if isinstance(x, dict)]
+                lst = [x for x in v if isinstance(x, dict)]
+                if lst:
+                    return lst
+
+        fallback = _dict_values_that_look_like_card_payloads(parsed)
+        if fallback:
+            return fallback
+
     return []
+
+
+def _text_field_from_card_dict(card: dict, *keys: str) -> str:
+    """Read first matching key case-insensitively; coerce scalars to str."""
+    lower_map = {str(k).lower(): v for k, v in card.items()}
+    for k in keys:
+        v = lower_map.get(k.lower())
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            s = "true" if v else "false"
+        elif isinstance(v, str):
+            s = v.strip()
+        else:
+            s = str(v).strip()
+        if s:
+            return s
+    return ""
 
 
 class CardVerificationService:
@@ -225,45 +320,71 @@ Back: {card_back}
 Deck context:
 {deck_context_str}
 
-Create 3–4 cards that test the same knowledge from different angles."""
+        Create 3–4 cards that test the same knowledge from different angles."""
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.7,
-                    max_tokens=1600,
+                    temperature=0.55,
+                    max_tokens=2048,
                 )
             )
 
             fragment = _extract_json_fragment_from_llm_text(response.text)
-            cards_data = _coerce_card_object_list(json.loads(fragment))
+            parsed = _parse_json_embedded(fragment)
+            if parsed is None:
+                head = fragment[:480].replace("\n", " ")
+                tail = fragment[-320:].replace("\n", " ") if len(fragment) > 480 else ""
+                print(
+                    "generate_multi_type_cards: JSON parse failed. "
+                    f"Head: {head!r}{' … ' + repr(tail) if tail else ''}"
+                )
+                return MultiTypeCards(cards=[], original_card_id=original_card_id)
+
+            cards_data = _coerce_card_object_list(parsed)
 
             cards: list[dict[str, str]] = []
             for card in cards_data:
-                raw_front = card.get("front")
-                raw_back = card.get("back")
-                if not isinstance(raw_front, str) or not isinstance(raw_back, str):
-                    continue
-                front = raw_front.strip()
-                back = raw_back.strip()
+                front = _text_field_from_card_dict(
+                    card, "front", "question", "prompt", "q", "stem"
+                )
+                back = _text_field_from_card_dict(
+                    card, "back", "answer", "response", "a", "explanation"
+                )
                 if not front or not back:
                     continue
-                rat = card.get("rationale")
+
+                type_raw = (
+                    card.get("type")
+                    or card.get("card_type")
+                    or card.get("variant_type")
+                )
+                if isinstance(type_raw, str) and type_raw.strip():
+                    vtype = type_raw.strip()
+                else:
+                    vtype = "variant"
+
+                rat = (
+                    _text_field_from_card_dict(
+                        card, "rationale", "why", "reason", "explanation_notes"
+                    )
+                    or ""
+                )
                 cards.append(
                     {
-                        "type": (
-                            card.get("type", "variant")
-                            if isinstance(card.get("type"), str)
-                            else "variant"
-                        ),
+                        "type": vtype,
                         "front": front,
                         "back": back,
-                        "rationale": (
-                            rat.strip() if isinstance(rat, str) and rat.strip() else ""
-                        ),
+                        "rationale": rat,
                     }
+                )
+
+            if cards_data and not cards:
+                print(
+                    "generate_multi_type_cards: parsed "
+                    f"{len(cards_data)} object(s) but none had usable front/back text."
                 )
 
             return MultiTypeCards(cards=cards, original_card_id=original_card_id)
