@@ -24,6 +24,28 @@ class MultiTypeCards:
     original_card_id: int
 
 
+def _extract_json_fragment_from_llm_text(text: str) -> str:
+    """Pull JSON from fenced blocks or trimmed raw JSON."""
+    t = text.strip()
+    if "```json" in t:
+        return t.split("```json")[1].split("```")[0].strip()
+    if "```" in t:
+        return t.split("```")[1].split("```")[0].strip()
+    return t
+
+
+def _coerce_card_object_list(parsed: object) -> list[dict]:
+    """Accept a bare JSON array or a dict with common list keys."""
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        for key in ("cards", "variants", "items"):
+            v = parsed.get(key)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+    return []
+
+
 class CardVerificationService:
     """Service for verifying cards and generating improvements."""
 
@@ -171,32 +193,39 @@ Create 2-3 simpler cards that each focus on ONE concept."""
             return []
 
     async def generate_multi_type_cards(
-        self, card_front: str, card_back: str, deck_context: dict
+        self,
+        card_front: str,
+        card_back: str,
+        deck_context: dict,
+        *,
+        original_card_id: int = 0,
     ) -> MultiTypeCards:
         """Generate multiple different types of cards from the same information."""
 
         system_prompt = """You are an expert in creating diverse flashcard types to test knowledge from different angles.
         
-        Generate 3-4 different card types (e.g., definition, reverse, application, example):
-        
-        Respond with JSON array:
-        [
-            {
-                "type": "type_name",
-                "front": "question",
-                "back": "answer",
-                "rationale": "why this type helps"
-            }
-        ]"""
+        Generate 3-4 different card types (e.g., definition, reverse, application, example).
+        Each variant must focus on ONE piece of knowledge (single-information principle).
 
+        Respond with JSON only: either a JSON array, or an object { "cards": [ ... ] }.
+        Each item:
+        {
+            "type": "short_type_name",
+            "front": "question",
+            "back": "answer",
+            "rationale": "why this type helps"
+        }"""
+
+        deck_context_str = json.dumps(deck_context, ensure_ascii=False)
         user_prompt = f"""Generate diverse card types from this information:
 
 Front: {card_front}
 Back: {card_back}
 
-Deck: {deck_context.get("deck_name", "Unknown")}
+Deck context:
+{deck_context_str}
 
-Create cards that test the same knowledge from different angles."""
+Create 3–4 cards that test the same knowledge from different angles."""
 
         try:
             response = await self.provider.complete(
@@ -204,33 +233,44 @@ Create cards that test the same knowledge from different angles."""
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     temperature=0.7,
-                    max_tokens=1200,
+                    max_tokens=1600,
                 )
             )
 
-            # Parse JSON response
-            text = response.text
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
+            fragment = _extract_json_fragment_from_llm_text(response.text)
+            cards_data = _coerce_card_object_list(json.loads(fragment))
 
-            cards_data = json.loads(text.strip())
-            cards = [
-                {
-                    "type": card.get("type", "variant"),
-                    "front": card.get("front"),
-                    "back": card.get("back"),
-                    "rationale": card.get("rationale"),
-                }
-                for card in cards_data
-            ]
+            cards: list[dict[str, str]] = []
+            for card in cards_data:
+                raw_front = card.get("front")
+                raw_back = card.get("back")
+                if not isinstance(raw_front, str) or not isinstance(raw_back, str):
+                    continue
+                front = raw_front.strip()
+                back = raw_back.strip()
+                if not front or not back:
+                    continue
+                rat = card.get("rationale")
+                cards.append(
+                    {
+                        "type": (
+                            card.get("type", "variant")
+                            if isinstance(card.get("type"), str)
+                            else "variant"
+                        ),
+                        "front": front,
+                        "back": back,
+                        "rationale": (
+                            rat.strip() if isinstance(rat, str) and rat.strip() else ""
+                        ),
+                    }
+                )
 
-            return MultiTypeCards(cards=cards, original_card_id=0)
+            return MultiTypeCards(cards=cards, original_card_id=original_card_id)
 
         except Exception as e:
             print(f"Error generating multi-type cards: {e}")
-            return MultiTypeCards(cards=[], original_card_id=0)
+            return MultiTypeCards(cards=[], original_card_id=original_card_id)
 
 
 class CardGenerationService:

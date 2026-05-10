@@ -704,7 +704,10 @@ class EnhancedUI:
 
                 deck_context = AnkiService.get_deck_context(card.deck_name)
                 result = await service.generate_multi_type_cards(
-                    card.front, card.back, deck_context
+                    card.front,
+                    card.back,
+                    deck_context,
+                    original_card_id=card.card_id,
                 )
 
                 self._show_multi_type_acceptance_dialog(
@@ -944,12 +947,18 @@ class EnhancedUI:
 
         layout.addWidget(
             QLabel(
-                "Generate variant card types from one card "
-                "(if several rows are highlighted, the focused or first selection is used):"
+                "Multi-select cards above (⇧ / Ctrl ⌘ click) to generate variants "
+                "for each, one after another. One dialog lists all variants; "
+                "each new card uses its source row's deck and note type."
             )
         )
 
-        layout.addWidget(QLabel("Card to use"))
+        variants_hint = QLabel("")
+        variants_hint.setWordWrap(True)
+        variants_hint.setStyleSheet("color: #555;")
+        layout.addWidget(variants_hint)
+
+        layout.addWidget(QLabel("Selection preview"))
 
         card_display = QTextEdit()
         card_display.setReadOnly(True)
@@ -967,11 +976,23 @@ class EnhancedUI:
             "background-color: #2196F3; color: white; font-weight: bold;"
         )
 
+        def update_variants_hint() -> None:
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                variants_hint.clear()
+            elif len(cards_sel) == 1:
+                variants_hint.clear()
+            else:
+                variants_hint.setText(
+                    f"{len(cards_sel)} cards selected — variants run sequentially "
+                    f"(generation order follows the list)."
+                )
+
         async def generate_variants():
-            card = self.card_selector.get_selected_card_from_list(card_list)
-            if not card:
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
                 showWarning(
-                    "Please select a card in the list at the top of this window."
+                    "Select one or more cards in the list at the top of this dialog."
                 )
                 return
 
@@ -980,19 +1001,56 @@ class EnhancedUI:
                 provider = build_provider(config)
                 service = CardVerificationService(provider)
 
-                deck_context = AnkiService.get_deck_context(card.deck_name)
-
                 generate_button.setEnabled(False)
-                generate_button.setText("Generating...")
+                blocks: list[str] = []
+                batches: list[tuple[CardInfo, list[dict[str, str]]]] = []
 
-                result = await service.generate_multi_type_cards(
-                    card.front, card.back, deck_context
-                )
+                for idx, card in enumerate(cards_sel, start=1):
+                    generate_button.setText(
+                        f"Generating variants {idx}/{len(cards_sel)}…"
+                    )
+                    QApplication.processEvents()
+
+                    deck_context = AnkiService.get_deck_context(card.deck_name)
+                    result = await service.generate_multi_type_cards(
+                        card.front,
+                        card.back,
+                        deck_context,
+                        original_card_id=card.card_id,
+                    )
+                    batches.append((card, list(result.cards)))
+                    leaf = card.deck_name.split("::")[-1] if card.deck_name else "?"
+                    section = (
+                        f"━━━ #{card.card_id} · {leaf} ━━━\n"
+                        + self._format_multi_type_section_text(card, result)
+                    )
+                    blocks.append(section.rstrip())
 
                 generate_button.setText("Generate Card Types")
                 generate_button.setEnabled(True)
 
-                self._show_multi_type_results(parent_dialog, result, card)
+                summary_lines = [
+                    f"Done: processed {len(cards_sel)} card(s).\n",
+                ]
+                n_variants = sum(len(vs) for _, vs in batches)
+                if n_variants:
+                    summary_lines.append(f"Generated {n_variants} variant(s) total.\n")
+
+                summary = "".join(summary_lines)
+                results_display.setText(summary + ("\n\n" + "\n\n".join(blocks)))
+                update_card_display()
+                update_variants_hint()
+
+                nonempty = [(c, vs) for c, vs in batches if vs]
+                if nonempty:
+                    self._show_multi_type_batch_acceptance_dialog(
+                        parent_dialog, nonempty
+                    )
+                else:
+                    showInfo(
+                        "No variants returned (empty or unreadable LLM JSON). "
+                        "Check the Results area or try again."
+                    )
 
             except Exception as exc:
                 generate_button.setText("Generate Card Types")
@@ -1015,22 +1073,26 @@ class EnhancedUI:
         self.state.text_fields["multi_type_results"] = results_display
 
         def update_card_display():
-            all_sel = self.card_selector.get_selected_cards_from_list(card_list)
-            card = self.card_selector.get_selected_card_from_list(card_list)
-            if card and len(all_sel) > 1:
+            cards_sel = self.card_selector.get_selected_cards_from_list(card_list)
+            if not cards_sel:
+                card_display.clear()
+            elif len(cards_sel) == 1:
+                c = cards_sel[0]
                 card_display.setText(
-                    f"Using 1 of {len(all_sel)} selected cards "
-                    "(focused row, else first selected):\n\n"
-                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\n"
-                    f"Deck: {card.deck_name}"
-                )
-            elif card:
-                card_display.setText(
-                    f"Front:\n{card.front}\n\nBack:\n{card.back}\n\n"
-                    f"Deck: {card.deck_name}"
+                    f"Front:\n{c.front}\n\nBack:\n{c.back}\n\n"
+                    f"Deck: {c.deck_name}\nModel: {c.model_name or '?'}"
                 )
             else:
-                card_display.clear()
+                lines = [f"{len(cards_sel)} cards to process:\n"]
+                for c in cards_sel[:20]:
+                    leaf = c.deck_name.split("::")[-1] if c.deck_name else "?"
+                    snip = c.front.replace("\n", " ")
+                    snip = f"{snip[:66]}…" if len(snip) > 68 else snip
+                    lines.append(f"• #{c.card_id}  {leaf}  —  {snip}")
+                if len(cards_sel) > 20:
+                    lines.append(f"… +{len(cards_sel) - 20} more")
+                card_display.setText("\n".join(lines))
+            update_variants_hint()
 
         card_list.currentRowChanged.connect(lambda _row: update_card_display())
         card_list.itemSelectionChanged.connect(update_card_display)
@@ -1420,103 +1482,172 @@ class EnhancedUI:
 
         return result_text
 
-    def _show_multi_type_results(
-        self, parent: QDialog, multi_cards: MultiTypeCards, original_card: CardInfo
-    ) -> None:
-        """Show multi-type card generation results."""
-        result_text = f"Generated {len(multi_cards.cards)} different card types:\n\n"
+    def _format_multi_type_section_text(
+        self, source: CardInfo, multi_cards: MultiTypeCards
+    ) -> str:
+        """Human-readable preview for the results pane (variants for one source card)."""
+        if not multi_cards.cards:
+            return "(No variants returned for this row — empty or unreadable JSON.)\n"
+
+        lines: list[str] = [
+            f"Generated {len(multi_cards.cards)} variant(s):\n",
+        ]
 
         for i, card in enumerate(multi_cards.cards, 1):
-            result_text += f"{i}. {card.get('type', 'Variant').title()}\n"
-            result_text += f"   Front: {card.get('front', '')[:80]}...\n"
-            result_text += f"   Back: {card.get('back', '')[:80]}...\n"
-            if card.get("rationale"):
-                result_text += f"   Why: {card.get('rationale')}\n"
-            result_text += "\n"
+            vtype = str(card.get("type", "Variant")).strip() or "Variant"
+            lines.append(f"{i}. {vtype.title()}")
+            lines.append(f"   Front: {card.get('front', '')}")
+            lines.append(f"   Back: {card.get('back', '')}")
+            rationale = card.get("rationale")
+            if rationale:
+                lines.append(f"   Why: {rationale}")
+            lines.append("")
 
-        self.state.text_fields["multi_type_results"].setText(result_text)
-
-        self._show_multi_type_acceptance_dialog(
-            parent, multi_cards.cards, original_card
-        )
+        return "\n".join(lines).rstrip() + "\n"
 
     def _show_multi_type_acceptance_dialog(
         self, parent: QDialog, cards: list[dict], original_card: CardInfo
     ) -> None:
-        """Show dialog to accept multi-type cards."""
+        """Single-source wrapper; uses the grouped batch acceptance UI."""
         if not cards:
+            return
+        self._show_multi_type_batch_acceptance_dialog(parent, [(original_card, cards)])
+
+    def _show_multi_type_batch_acceptance_dialog(
+        self,
+        parent: QDialog,
+        batches: list[tuple[CardInfo, list[dict[str, str]]]],
+    ) -> None:
+        """One dialog: optionally several source cards, each with its variant list."""
+
+        flat: list[tuple[CardInfo, dict[str, str]]] = []
+        for source_card, variants in batches:
+            for v in variants:
+                flat.append((source_card, v))
+
+        if not flat:
             return
 
         acceptance_dialog = QDialog(parent)
         acceptance_dialog.setWindowTitle("Add Card Variants")
-        acceptance_dialog.setMinimumSize(700, 500)
+        acceptance_dialog.setMinimumSize(720, 520)
 
-        layout = QVBoxLayout(acceptance_dialog)
-        layout.addWidget(QLabel("Select which variants to add:"))
+        outer = QVBoxLayout(acceptance_dialog)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(
+            QLabel(
+                "Select variants to add. Deck and note type match each source card row."
+            )
+        )
 
         scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
 
-        selected_flags: list[bool] = [True] * len(cards)
+        selected_flags = [True] * len(flat)
+        prev_source_id: int | None = None
 
-        for i, card in enumerate(cards, 1):
-            frame_layout = QVBoxLayout()
+        for fi, (source_card, variant) in enumerate(flat):
+            if prev_source_id != source_card.card_id:
+                leaf = (
+                    source_card.deck_name.split("::")[-1]
+                    if source_card.deck_name
+                    else "?"
+                )
+                hdr = QLabel(
+                    f"━━━ From #{source_card.card_id} · {leaf} "
+                    f"· {source_card.model_name or '?'} ━━━"
+                )
+                hdr.setStyleSheet("font-weight: bold;")
+                hdr.setWordWrap(True)
+                scroll_layout.addWidget(hdr)
+                prev_source_id = source_card.card_id
 
-            checkbox = QCheckBox(f"Add: {card.get('type', f'Variant {i}').title()}")
-            checkbox.setChecked(True)
+            vt = str(variant.get("type", "variant")).strip() or "variant"
 
-            def make_checker(idx):
-                def on_toggle(state):
-                    selected_flags[idx] = bool(state)
+            chk = QCheckBox(f"Add: {vt.replace('_', ' ').title()}")
+            chk.setChecked(True)
+
+            def make_checker(idx: int):
+                def on_toggle(checked: bool) -> None:
+                    selected_flags[idx] = checked
 
                 return on_toggle
 
-            checkbox.stateChanged.connect(make_checker(i - 1))
-            frame_layout.addWidget(checkbox)
+            chk.toggled.connect(make_checker(fi))
+            scroll_layout.addWidget(chk)
 
-            frame_layout.addWidget(QLabel(f"Front: {card.get('front', '')[:100]}"))
-            frame_layout.addWidget(QLabel(f"Back: {card.get('back', '')[:100]}"))
+            fe = QTextEdit()
+            fe.setReadOnly(True)
+            fe.setPlainText(f"Front:\n{variant.get('front', '')}")
+            fe.setMinimumHeight(64)
+            fe.setMaximumHeight(120)
+            scroll_layout.addWidget(fe)
 
-            scroll_layout.addLayout(frame_layout)
-            scroll_layout.addWidget(QLabel("---"))
+            be = QTextEdit()
+            be.setReadOnly(True)
+            be.setPlainText(f"Back:\n{variant.get('back', '')}")
+            be.setMinimumHeight(64)
+            be.setMaximumHeight(120)
+            scroll_layout.addWidget(be)
+
+            rat = variant.get("rationale")
+            if isinstance(rat, str) and rat.strip():
+                scroll_layout.addWidget(QLabel(f"Why: {rat.strip()}"))
+
+            scroll_layout.addWidget(QLabel(""))
 
         scroll_layout.addStretch()
         scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
+        outer.addWidget(scroll, stretch=1)
 
-        def add_selected():
-            tags_base = cast(
-                list[str],
-                self.tag_manager.get_complete_tags_for_generated_card(
-                    "text", is_verified=False
-                ),
-            )
-            tags_base.append("ai_multi_type")
+        tm = self.tag_manager
+
+        def add_selected() -> None:
+            if tm is None:
+                tags_base: list[str] = ["ai_generated", "ai_multi_type"]
+            else:
+                tags_base = cast(
+                    list[str],
+                    tm.get_complete_tags_for_generated_card("text", is_verified=False),
+                )
+                tags_base.append("ai_multi_type")
 
             added = 0
             for idx, flag in enumerate(selected_flags):
                 if not flag:
                     continue
-                card = cards[idx]
-                tags = tags_base + [card.get("type", "variant")]
+                source_card, vc = flat[idx]
+                vtype_raw = vc.get("type", "variant")
+                vtag = (
+                    str(vtype_raw).strip().replace(" ", "_")
+                    if isinstance(vtype_raw, str)
+                    else "variant"
+                )
+                tags = tags_base + [vtag]
                 AnkiService.add_card(
-                    front=card.get("front", ""),
-                    back=card.get("back", ""),
-                    deck_name=original_card.deck_name,
-                    model_name=original_card.model_name,
+                    front=vc.get("front", ""),
+                    back=vc.get("back", ""),
+                    deck_name=source_card.deck_name,
+                    model_name=source_card.model_name,
                     tags=tags,
                 )
                 added += 1
 
-            showInfo(f"Added {added} card variants!")
+            showInfo(f"Added {added} card variant(s).")
 
-        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore
+        buttons = (
+            QDialogButtonBox.StandardButton.Ok  # type: ignore
+            | QDialogButtonBox.StandardButton.Cancel  # type: ignore
+        )
         button_box = QDialogButtonBox(buttons)
         button_box.accepted.connect(add_selected)
         button_box.accepted.connect(acceptance_dialog.accept)
         button_box.rejected.connect(acceptance_dialog.reject)
-        layout.addWidget(button_box)
+        outer.addWidget(button_box)
 
         acceptance_dialog.exec()
 
