@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QFileDialog,
     QCheckBox,
@@ -317,7 +318,7 @@ class EnhancedUI:
 
         dialog = QDialog(mw)
         dialog.setWindowTitle("AI Flashcard Manager")
-        dialog.setMinimumSize(900, 700)
+        dialog.setMinimumSize(920, 820)
 
         layout = QVBoxLayout(dialog)
 
@@ -402,8 +403,15 @@ class EnhancedUI:
 
         card_list = QListWidget()
         card_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        card_list.setMinimumHeight(260)
-        pick_layout_outer.addWidget(card_list)
+        card_list.setMinimumHeight(280)
+        list_policy = QSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        card_list.setSizePolicy(list_policy)
+        card_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        card_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        card_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        pick_layout_outer.addWidget(card_list, stretch=1)
 
         def picker_tag_use() -> str:
             txt = tag_combo.currentText().strip()
@@ -515,7 +523,9 @@ class EnhancedUI:
 
         pick_wrap = QWidget()
         pick_wrap.setLayout(pick_layout_outer)
-        layout.addWidget(pick_wrap)
+        pw_pol = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        pick_wrap.setSizePolicy(pw_pol)
+        layout.addWidget(pick_wrap, stretch=2)
         layout.addWidget(
             QLabel(
                 "Select card(s) in the list above (⇧ / Ctrl ⌘ multi-select). "
@@ -539,7 +549,8 @@ class EnhancedUI:
         generate_tab = self._create_generate_tab(dialog)
         tabs.addTab(generate_tab, "3. Create from Media")
 
-        layout.addWidget(tabs)
+        tabs.setMinimumHeight(420)
+        layout.addWidget(tabs, stretch=5)
 
         # Buttons
         buttons = QDialogButtonBox.StandardButton.Close
@@ -709,7 +720,11 @@ class EnhancedUI:
 
         card_display = QTextEdit()
         card_display.setReadOnly(True)
-        layout.addWidget(card_display)
+        card_display.setMinimumHeight(180)
+        card_display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        layout.addWidget(card_display, stretch=2)
 
         btn_row = QHBoxLayout()
         verify_button = QPushButton("Verify with AI")
@@ -734,8 +749,12 @@ class EnhancedUI:
 
         results_display = QTextEdit()
         results_display.setReadOnly(True)
+        results_display.setMinimumHeight(260)
+        results_display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         layout.addWidget(QLabel("Results"))
-        layout.addWidget(results_display)
+        layout.addWidget(results_display, stretch=3)
 
         self.state.text_fields["verify_results"] = results_display
 
@@ -906,8 +925,12 @@ class EnhancedUI:
 
         card_display = QTextEdit()
         card_display.setReadOnly(True)
+        card_display.setMinimumHeight(180)
+        card_display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         layout.addWidget(QLabel("Card to use"))
-        layout.addWidget(card_display)
+        layout.addWidget(card_display, stretch=2)
 
         generate_button = QPushButton("Generate Card Types")
         generate_button.setAutoDefault(False)
@@ -953,8 +976,12 @@ class EnhancedUI:
 
         results_display = QTextEdit()
         results_display.setReadOnly(True)
+        results_display.setMinimumHeight(240)
+        results_display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         layout.addWidget(QLabel("Generated Variants:"))
-        layout.addWidget(results_display)
+        layout.addWidget(results_display, stretch=3)
 
         self.state.text_fields["multi_type_results"] = results_display
 
@@ -1023,15 +1050,23 @@ class EnhancedUI:
         # Content input
         content_display = QTextEdit()
         content_display.setPlaceholderText("Enter text content here...")
+        content_display.setMinimumHeight(220)
+        content_display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         layout.addWidget(QLabel("Content:"))
-        layout.addWidget(content_display)
+        layout.addWidget(content_display, stretch=4)
 
         # Debug output
         debug_output = QTextEdit()
         debug_output.setReadOnly(True)
-        debug_output.setMaximumHeight(130)
+        debug_output.setMinimumHeight(140)
+        debug_output.setMaximumHeight(280)
+        debug_output.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
+        )
         layout.addWidget(QLabel("Debug:"))
-        layout.addWidget(debug_output)
+        layout.addWidget(debug_output, stretch=1)
         self.state.text_fields["generate_debug"] = debug_output
 
         file_feedback = QLabel("")
