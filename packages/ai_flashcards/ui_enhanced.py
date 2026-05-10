@@ -441,6 +441,8 @@ class EnhancedUI:
         layout.addWidget(card_display)
 
         verify_button = QPushButton("Verify with AI")
+        verify_button.setAutoDefault(False)
+        verify_button.setDefault(False)
         verify_button.setStyleSheet(
             "background-color: #4CAF50; color: white; font-weight: bold;"
         )
@@ -515,6 +517,8 @@ class EnhancedUI:
         layout.addWidget(card_display)
 
         generate_button = QPushButton("Generate Card Types")
+        generate_button.setAutoDefault(False)
+        generate_button.setDefault(False)
         generate_button.setStyleSheet(
             "background-color: #2196F3; color: white; font-weight: bold;"
         )
@@ -628,10 +632,17 @@ class EnhancedUI:
         layout.addWidget(debug_output)
         self.state.text_fields["generate_debug"] = debug_output
 
-        # File button
-        file_button = QPushButton("Select File")
+        file_feedback = QLabel("")
+        file_feedback.setWordWrap(True)
+        layout.addWidget(file_feedback)
+
+        # File button (no auto-default: stray Enter must not open the picker)
+        file_button = QPushButton("Select File...")
+        file_button.setAutoDefault(False)
+        file_button.setDefault(False)
 
         def select_file():
+            file_feedback.clear()
             dlg_opts = QFileDialog.Option.DontUseNativeDialog
             file_path, _ = QFileDialog.getOpenFileName(
                 parent_dialog,
@@ -639,7 +650,7 @@ class EnhancedUI:
                 str(Path.home()),
                 "Supported (*.pdf *.pptx *.png *.jpg *.jpeg *.bmp *.tiff *.txt *.md);;"
                 "PDF (*.pdf);;PowerPoint (*.pptx);;"
-                "Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Text (*.txt *.md);;All files (*)",
+                "Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Text (*.txt *.md)",
                 options=dlg_opts,
             )
             if not file_path:
@@ -649,6 +660,12 @@ class EnhancedUI:
                 import importlib
 
                 p = Path(file_path)
+                if not p.is_file():
+                    file_feedback.setText(
+                        "That path is not a regular file (e.g. a folder). Pick a PDF, "
+                        "PPTX, image, or text file."
+                    )
+                    return
                 suffix = p.suffix.lower()
 
                 if suffix in (".txt", ".md", ".markdown"):
@@ -722,18 +739,20 @@ class EnhancedUI:
                     source_combo.setCurrentText("Presentation Slide")
 
                 else:
-                    showWarning(
-                        f"Unsupported file type ({suffix or 'unknown'}).\n\n"
-                        "Use PDF, PPTX, images, or .txt/.md — or paste text manually."
+                    file_feedback.setText(
+                        f"Unsupported type “{suffix or '(none)'}”. "
+                        "Use PDF, PPTX, common images, or .txt/.md — or paste text above."
                     )
             except Exception as e:
-                showWarning(f"Error loading file: {e}")
+                file_feedback.setText(f"Could not read file: {e}")
 
         file_button.clicked.connect(select_file)
         layout.addWidget(file_button)
 
         # Generate button
         generate_button = QPushButton("Generate Cards")
+        generate_button.setAutoDefault(False)
+        generate_button.setDefault(False)
         generate_button.setStyleSheet(
             "background-color: #FF9800; color: white; font-weight: bold;"
         )
