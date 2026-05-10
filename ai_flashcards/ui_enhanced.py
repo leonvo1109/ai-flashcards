@@ -1628,14 +1628,19 @@ class EnhancedUI:
                     else "variant"
                 )
                 tags = tags_base + [vtag]
-                AnkiService.add_card(
+                note_id = AnkiService.add_card(
                     front=vc.get("front", ""),
                     back=vc.get("back", ""),
                     deck_name=source_card.deck_name,
                     model_name=source_card.model_name,
                     tags=tags,
                 )
-                added += 1
+                if note_id:
+                    added += 1
+
+            maybe_reset = getattr(mw, "maybeReset", None)
+            if callable(maybe_reset):
+                maybe_reset()
 
             showInfo(f"Added {added} card variant(s).")
 
@@ -1732,6 +1737,10 @@ class EnhancedUI:
                 )
                 if note_id:
                     added_count += 1
+
+            maybe_reset = getattr(mw, "maybeReset", None)
+            if callable(maybe_reset):
+                maybe_reset()
 
             showInfo(f"Successfully added {added_count} cards!")
             generation_dialog.accept()

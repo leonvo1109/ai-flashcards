@@ -38,6 +38,17 @@ class AnkiService:
     PICKER_CURRENT_DECK = "__AI_FLASHPICK_CURRENT_DECK__"
 
     @staticmethod
+    def _set_note_primary_fields(note: Any, front: str, back: str) -> bool:
+        """Assign question/answer to the first two field ordinals (any standard notetype)."""
+        flds = getattr(note, "fields", None) or []
+        if not flds:
+            return False
+        flds[0] = front
+        if len(flds) >= 2:
+            flds[1] = back
+        return True
+
+    @staticmethod
     def note_pair_preview(note: Any) -> tuple[str, str]:
         """First field + second field values for previews (works for every notetype)."""
         flds = list(getattr(note, "fields", None) or [])
@@ -364,20 +375,20 @@ class AnkiService:
 
             # Create a new note
             note = mw.col.new_note(model)
-            note["Front"] = front
-            note["Back"] = back
+            if not AnkiService._set_note_primary_fields(note, front, back):
+                print(f"Note type '{model_name}' has no fields")
+                return None
 
             if tags:
                 note.tags = tags
 
-            # Get the deck
-            deck = mw.col.decks.byName(deck_name)
-            if not deck:
-                # Create the deck if it doesn't exist
-                deck = mw.col.decks.id(deck_name)
+            # add_note requires DeckId; by_name returns a dict — never pass that here.
+            did = mw.col.decks.id(deck_name)
+            if did is None:
+                print(f"Could not resolve or create deck {deck_name!r}")
+                return None
 
-            # Add the note
-            mw.col.add_note(note, deck)
+            mw.col.add_note(note, did)
 
             return note.id
         except Exception as e:
@@ -431,11 +442,10 @@ class AnkiService:
             card = mw.col.get_card(card_id)
             note = card.note()
 
-            if front is not None:
-                note["Front"] = front
-
-            if back is not None:
-                note["Back"] = back
+            if front is not None and note.fields:
+                note.fields[0] = front
+            if back is not None and len(note.fields) >= 2:
+                note.fields[1] = back
 
             if tags is not None:
                 note.tags = tags
