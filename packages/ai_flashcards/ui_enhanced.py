@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QSpinBox,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -53,6 +55,86 @@ class UIState:
     text_fields: dict[str, QTextEdit] = field(default_factory=dict)
 
 
+def _compact_card_row_label(card: CardInfo) -> str:
+    """One-line row: id, model, deck leaf, short front snippet."""
+    deck_leaf = card.deck_name.split("::")[-1] if card.deck_name else "—"
+    if len(deck_leaf) > 22:
+        deck_leaf = deck_leaf[:19] + "…"
+    model = card.model_name or "—"
+    if len(model) > 18:
+        model = model[:15] + "…"
+    snip = card.front.replace("\n", " ").strip()
+    if len(snip) > 48:
+        snip = snip[:45] + "…"
+    return f"#{card.card_id} · {model} · {deck_leaf} — {snip}"
+
+
+def _card_row_tooltip(card: CardInfo) -> str:
+    tag_part = ", ".join(card.tags[:12]) if card.tags else "(no tags)"
+    if len(card.tags) > 12:
+        tag_part += "…"
+    return (
+        f"Card id: {card.card_id}  ·  Note id: {card.note_id}\n"
+        f"Deck: {card.deck_name}\n"
+        f"Note type: {card.model_name}\n"
+        f"Tags: {tag_part}\n\n"
+        f"Front:\n{card.front}\n\n"
+        f"Back:\n{card.back}"
+    )
+
+
+def _populate_deck_tree(tree: QTreeWidget, full_names: list[str]) -> None:
+    """Tree shows one segment per level; only real decks are selectable."""
+    tree.clear()
+    deck_set = set(full_names)
+    path_role = Qt.ItemDataRole.UserRole + 1
+    for full in sorted(full_names, key=str.lower):
+        parts = full.split("::")
+        parent = tree.invisibleRootItem()
+        for i in range(len(parts)):
+            segment = parts[i]
+            path_so_far = "::".join(parts[: i + 1])
+            child: QTreeWidgetItem | None = None
+            for j in range(parent.childCount()):
+                ch = parent.child(j)
+                if ch.text(0) == segment:
+                    child = ch
+                    break
+            if child is None:
+                child = QTreeWidgetItem([segment])
+                parent.addChild(child)
+            child.setData(0, path_role, path_so_far)
+            if path_so_far in deck_set:
+                child.setData(0, Qt.ItemDataRole.UserRole, path_so_far)
+                child.setToolTip(0, path_so_far)
+                child.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            else:
+                child.setData(0, Qt.ItemDataRole.UserRole, None)
+                child.setToolTip(0, path_so_far)
+                child.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            parent = child
+
+
+def _apply_deck_tree_filter(tree: QTreeWidget, needle: str) -> None:
+    path_role = Qt.ItemDataRole.UserRole + 1
+
+    def visit(item: QTreeWidgetItem) -> bool:
+        path = item.data(0, path_role)
+        path_s = path if isinstance(path, str) else ""
+        seg = item.text(0)
+        self_hit = not needle or needle in path_s.lower() or needle in seg.lower()
+        any_child = False
+        for i in range(item.childCount()):
+            if visit(item.child(i)):
+                any_child = True
+        visible = self_hit or any_child
+        item.setHidden(not visible)
+        return visible
+
+    for i in range(tree.topLevelItemCount()):
+        visit(tree.topLevelItem(i))
+
+
 class CardSelector:
     """In-dialog card picker: fill a QListWidget with card IDs and resolve selection."""
 
@@ -71,11 +153,9 @@ class CardSelector:
             if not card:
                 missing = True
                 continue
-            label = (
-                f"#{card.card_id}  [{card.deck_name[:28]}]\n "
-                + f"{card.front.replace(chr(10), ' ')[:120]}"
-            )
+            label = _compact_card_row_label(card)
             it = QListWidgetItem(label)
+            it.setToolTip(_card_row_tooltip(card))
             it.setData(Qt.ItemDataRole.UserRole, card.card_id)
             list_widget.addItem(it)
         list_widget.blockSignals(False)
@@ -218,11 +298,32 @@ class EnhancedUI:
             QLabel("Pick a card here (same window as verify / variants):")
         )
 
+        deck_pick: dict[str, str | None] = {"deck": None}
+        deck_popup_holder: list[QWidget | None] = [None]
+
+        btn_deck = QPushButton()
+        btn_deck.setMinimumWidth(220)
+        btn_deck.setAutoDefault(False)
+        btn_deck.setDefault(False)
+
+        def refresh_deck_button() -> None:
+            dv = deck_pick["deck"]
+            if dv is None:
+                btn_deck.setText("Deck · All decks ▾")
+                btn_deck.setToolTip("Tap to browse all decks in a nested list")
+            elif dv == AnkiService.PICKER_CURRENT_DECK:
+                btn_deck.setText("Deck · Current ▾")
+                btn_deck.setToolTip(
+                    "Same subset as Browse search deck:current (depends on context)"
+                )
+            else:
+                leaf = dv.split("::")[-1]
+                btn_deck.setText(f"Deck · {leaf} ▾")
+                btn_deck.setToolTip(dv)
+
         filter_row = QHBoxLayout()
-        deck_combo = QComboBox()
-        deck_combo.setMinimumWidth(260)
-        for lbl, deck_data in AnkiService.picker_deck_combo_rows():
-            deck_combo.addItem(lbl, deck_data)
+        refresh_deck_button()
+
         nt_combo = QComboBox()
         nt_combo.setMinimumWidth(200)
         nt_combo.addItem("(Any note type)", None)
@@ -240,7 +341,7 @@ class EnhancedUI:
             tag_le.setPlaceholderText("Pick or type a tag")
 
         filter_row.addWidget(QLabel("Deck"))
-        filter_row.addWidget(deck_combo, stretch=3)
+        filter_row.addWidget(btn_deck, stretch=3)
         filter_row.addWidget(QLabel("Note type"))
         filter_row.addWidget(nt_combo, stretch=2)
         filter_row.addWidget(QLabel("Tag"))
@@ -288,7 +389,7 @@ class EnhancedUI:
         def reload_card_list() -> None:
             if not mw.col:
                 return
-            deck_data = deck_combo.currentData(Qt.ItemDataRole.UserRole)
+            deck_data = deck_pick["deck"]
             ids = AnkiService.picker_resolve_card_ids(
                 deck_data,
                 tag=picker_tag_use() or None,
@@ -298,13 +399,81 @@ class EnhancedUI:
             )
             self.card_selector.fill_card_list_widget(card_list, ids)
 
+        def close_deck_popup() -> None:
+            w = deck_popup_holder[0]
+            if w is not None:
+                w.close()
+            deck_popup_holder[0] = None
+
+        def apply_deck_choice(val: str | None) -> None:
+            deck_pick["deck"] = val
+            refresh_deck_button()
+            close_deck_popup()
+            reload_card_list()
+
+        def open_deck_popup() -> None:
+            close_deck_popup()
+            pop = QWidget(dialog, Qt.WindowType.Popup)
+            pop.setMinimumSize(360, 460)
+            pop.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+            pv = QVBoxLayout(pop)
+            quick = QHBoxLayout()
+            qb_all = QPushButton("All decks")
+            qb_cur = QPushButton("Current deck")
+            qb_all.setAutoDefault(False)
+            qb_cur.setAutoDefault(False)
+            qb_all.clicked.connect(lambda: apply_deck_choice(None))
+            qb_cur.clicked.connect(
+                lambda: apply_deck_choice(AnkiService.PICKER_CURRENT_DECK)
+            )
+            quick.addWidget(qb_all)
+            quick.addWidget(qb_cur)
+            pv.addLayout(quick)
+
+            filt_deck = QLineEdit()
+            filt_deck.setClearButtonEnabled(True)
+            filt_deck.setPlaceholderText("Search decks by name…")
+            pv.addWidget(filt_deck)
+
+            deck_tree = QTreeWidget()
+            deck_tree.setHeaderHidden(True)
+            deck_tree.setUniformRowHeights(True)
+            deck_tree.setMinimumHeight(280)
+            _populate_deck_tree(deck_tree, AnkiService.picker_deck_full_names())
+            pv.addWidget(deck_tree, stretch=1)
+
+            filt_deck.textChanged.connect(
+                lambda t: _apply_deck_tree_filter(deck_tree, t.strip().lower())
+            )
+
+            def on_deck_clicked(item: QTreeWidgetItem, _col: int) -> None:
+                deck_path = item.data(0, Qt.ItemDataRole.UserRole)
+                if isinstance(deck_path, str) and deck_path:
+                    apply_deck_choice(deck_path)
+
+            deck_tree.itemClicked.connect(on_deck_clicked)
+
+            def clear_holder(*_args: object) -> None:
+                deck_popup_holder[0] = None
+
+            pop.destroyed.connect(clear_holder)
+            deck_popup_holder[0] = pop
+
+            origin = btn_deck.mapToGlobal(QPoint(0, btn_deck.height()))
+            pop.move(origin)
+            pop.show()
+            filt_deck.setFocus()
+            deck_tree.expandToDepth(0)
+
+        btn_deck.clicked.connect(open_deck_popup)
+
         def run_search_clicked() -> None:
             if not mw.col:
                 showWarning("Collection not ready.")
                 return
             reload_card_list()
 
-        deck_combo.activated.connect(lambda _i: reload_card_list())
         nt_combo.activated.connect(lambda _i: reload_card_list())
         tag_combo.activated.connect(lambda _i: reload_card_list())
         if tag_le is not None:

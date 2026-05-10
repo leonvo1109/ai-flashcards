@@ -138,6 +138,21 @@ class AnkiService:
         return rows
 
     @staticmethod
+    def picker_deck_full_names() -> list[str]:
+        """Sorted full deck paths for building a hierarchy tree."""
+        if not mw.col:
+            return []
+        return sorted(
+            (
+                e.name
+                for e in mw.col.decks.all_names_and_ids(
+                    skip_empty_default=False, include_filtered=True
+                )
+            ),
+            key=str.lower,
+        )
+
+    @staticmethod
     def picker_notetype_combo_rows() -> list[tuple[str, str]]:
         """Display label + canonical name used in searches."""
         if not mw.col:
