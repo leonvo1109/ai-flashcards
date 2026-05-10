@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from aqt import mw
 from aqt.qt import (
     QAction,
+    Qt,
     QDialog,
     QDialogButtonBox,
     QEventLoop,
@@ -144,8 +145,11 @@ class CardSelector:
         self, combo: QComboBox, parent_widget: QWidget | None = None
     ) -> bool:
         """
-        Open Anki's browser to select a card.
-        Returns True if a card was selected, False otherwise.
+        Open Browse and a floating control so selection is explicitly applied.
+
+        Modal parent dialogs swallow focus; hiding them while Browse is shown is still
+        required. The polling loop proved unreliable across platforms; instead we rely
+        on an explicit «Apply selection» action that reads Browser.selected_cards().
         """
         try:
             import aqt
@@ -161,45 +165,126 @@ class CardSelector:
             browser.activateWindow()
             QApplication.processEvents()
 
+            picked_holder: list[bool] = [False]
             loop = QEventLoop()
-            last_cards: list[int] = []
-            picked = False
 
-            def finish(card_id: int) -> None:
-                nonlocal picked
-                self.selected_card_id = card_id
-                card_info = AnkiService.get_card_by_id(card_id)
-                if card_info is not None:
-                    combo.blockSignals(True)
-                    combo.clear()
-                    display = f"[{card_info.deck_name}] {card_info.front[:60]}"
-                    combo.addItem(display, card_id)
-                    combo.setCurrentIndex(0)
-                    combo.blockSignals(False)
-                    combo.currentIndexChanged.emit(0)
-                    picked = True
+            palette = QDialog(mw)
+            palette.setModal(False)
+            palette.setWindowTitle("Browse selection")
+            palette.setWindowFlags(
+                palette.windowFlags()
+                | Qt.WindowType.Tool
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowCloseButtonHint
+            )
 
-            def poll() -> None:
+            plat = QVBoxLayout(palette)
+            hint = QLabel(
+                "Choose cards in the Browse window,\n"
+                "then tap «Apply selection» (supports multiple)."
+            )
+            hint.setWordWrap(True)
+            plat.addWidget(hint)
+            status = QLabel("Cards selected: …")
+            plat.addWidget(status)
+
+            btns = QHBoxLayout()
+
+            MAX_CARDS_APPLY = 80
+
+            def read_selected_ids() -> list[int]:
                 try:
-                    visible = browser.isVisible()
-                except RuntimeError:
-                    visible = False
-                if visible:
-                    try:
-                        ids = browser.selected_cards()
-                        if ids:
-                            last_cards[:] = [int(cid) for cid in ids]
-                    except RuntimeError:
-                        pass
-                    QTimer.singleShot(80, poll)
-                    return
-                if last_cards:
-                    finish(last_cards[0])
-                loop.quit()
+                    return [int(cid) for cid in browser.selected_cards()]
+                except (RuntimeError, TypeError):
+                    return []
 
-            QTimer.singleShot(80, poll)
+            def refresh_status() -> None:
+                n = len(read_selected_ids())
+                status.setText(
+                    f"Cards selected in Browse: {n} · up to {MAX_CARDS_APPLY} loaded"
+                )
+
+            def apply_into_combo() -> None:
+                cids = read_selected_ids()
+                if not cids:
+                    showWarning(
+                        "No cards selected in Browse.\n\n"
+                        "Click rows in the card table (⌘ / Ctrl‑click for several rows), "
+                        "then tap Apply selection again."
+                    )
+                    refresh_status()
+                    return
+
+                uniq: list[int] = []
+                for cid in cids:
+                    if cid not in uniq:
+                        uniq.append(cid)
+                uniq = uniq[:MAX_CARDS_APPLY]
+
+                combo.blockSignals(True)
+                combo.clear()
+                try:
+                    for cid in uniq:
+                        card_info = AnkiService.get_card_by_id(cid)
+                        if card_info is None:
+                            continue
+                        disp = f"[{card_info.deck_name}] {card_info.front[:60]}"
+                        combo.addItem(disp, cid)
+                finally:
+                    combo.blockSignals(False)
+
+                if combo.count():
+                    combo.setCurrentIndex(0)
+                    combo.currentIndexChanged.emit(0)
+                    self.selected_card_id = int(combo.itemData(0))
+                    picked_holder[0] = True
+                    showInfo(
+                        f"Applied {combo.count()} card(s) into the picker.\n"
+                        "Closing this bar — your AI Flashcards window will return."
+                    )
+                    palette.accept()
+                else:
+                    picked_holder[0] = False
+                    showWarning(
+                        "Could not resolve the selected cards.\n\n"
+                        "Pick rows in Browse’s card list (not only the sidebar), "
+                        "then retry."
+                    )
+
+            def quit_palette() -> None:
+                palette.reject()
+
+            pulse = QTimer(palette)
+
+            pulse.timeout.connect(refresh_status)
+            pulse.start(500)
+            palette.finished.connect(pulse.stop)
+            palette.finished.connect(loop.quit)
+
+            apply_bt = QPushButton("Apply selection")
+            cancel_bt = QPushButton("Cancel")
+            btns.addWidget(apply_bt)
+            btns.addWidget(cancel_bt)
+            plat.addLayout(btns)
+
+            apply_bt.clicked.connect(apply_into_combo)
+            cancel_bt.clicked.connect(quit_palette)
+
+            mw_geom = mw.frameGeometry()
+            palette.adjustSize()
+            ph, pw = palette.height(), palette.width()
+            ax = mw_geom.x() + max(16, (mw_geom.width() - pw) // 2)
+            ay = mw_geom.y() + mw_geom.height() - ph - 60
+            palette.move(ax, max(mw_geom.y() + 24, ay))
+            palette.show()
+            palette.raise_()
+            browser.raise_()
+
+            refresh_status()
+
             loop.exec()
-            return picked
+            pulse.stop()
+            return picked_holder[0]
 
         except Exception as e:
             print(f"[AI Flashcards] Error opening browser: {e}")
