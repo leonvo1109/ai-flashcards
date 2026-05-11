@@ -25,6 +25,52 @@ class MultiTypeCards:
     original_card_id: int
 
 
+@dataclass
+class AIPromptSettings:
+    """User-configurable prompt and behavior controls."""
+
+    agentic_enabled: bool = True
+    strict_source_grounding: bool = True
+    allow_model_knowledge_fallback: bool = False
+    bullet_keywords_only: bool = True
+    max_front_words: int = 14
+    max_back_words: int = 10
+    additional_instructions: str = ""
+    generation_prompt_extra: str = ""
+    variants_prompt_extra: str = ""
+    verify_prompt_extra: str = ""
+    temperature: float | None = None
+
+    @classmethod
+    def from_config(cls, config: dict | None) -> "AIPromptSettings":
+        if config is None:
+            # Keep backwards-compatible behavior for callers/tests that do not pass config.
+            return cls(
+                agentic_enabled=False,
+                strict_source_grounding=False,
+                allow_model_knowledge_fallback=True,
+                bullet_keywords_only=True,
+                max_front_words=14,
+                max_back_words=10,
+            )
+        cfg = config or {}
+        return cls(
+            agentic_enabled=bool(cfg.get("ai_agentic_enabled", True)),
+            strict_source_grounding=bool(cfg.get("ai_strict_source_grounding", True)),
+            allow_model_knowledge_fallback=bool(
+                cfg.get("ai_allow_model_knowledge_fallback", False)
+            ),
+            bullet_keywords_only=bool(cfg.get("ai_bullet_keywords_only", True)),
+            max_front_words=max(4, int(cfg.get("ai_max_front_words", 14) or 14)),
+            max_back_words=max(3, int(cfg.get("ai_max_back_words", 10) or 10)),
+            additional_instructions=str(cfg.get("ai_additional_instructions", "") or ""),
+            generation_prompt_extra=str(cfg.get("ai_generation_prompt_extra", "") or ""),
+            variants_prompt_extra=str(cfg.get("ai_variants_prompt_extra", "") or ""),
+            verify_prompt_extra=str(cfg.get("ai_verify_prompt_extra", "") or ""),
+            temperature=float(cfg["temperature"]) if "temperature" in cfg else None,
+        )
+
+
 def _extract_json_fragment_from_llm_text(text: str) -> str:
     """Pull JSON from fenced blocks or trimmed raw JSON."""
     t = (text or "").strip().removeprefix("\ufeff")
@@ -167,11 +213,59 @@ def _text_field_from_card_dict(card: dict, *keys: str) -> str:
     return ""
 
 
+def _normalize_compact_text(text: str, max_words: int) -> str:
+    """Force concise output for flashcard fields."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    no_lines = re.sub(r"\s+", " ", raw)
+    no_bullets = no_lines.lstrip("-*• ").strip()
+    words = no_bullets.split()
+    if len(words) > max_words:
+        return " ".join(words[:max_words]).rstrip(".,;:") + "..."
+    return no_bullets
+
+
+def _render_card_style_rules(settings: AIPromptSettings) -> str:
+    """Renderable prompt fragment that enforces concise card text."""
+    compact_rule = (
+        "Use short keywords / compact bullet-like phrasing; avoid full sentences."
+        if settings.bullet_keywords_only
+        else "Prefer concise wording; avoid long explanations."
+    )
+    grounding_rule = (
+        "Use ONLY provided source text and deck context/sample cards. "
+        "Do not invent facts."
+        if settings.strict_source_grounding
+        else "Prefer provided source text and deck context/sample cards."
+    )
+    fallback_rule = (
+        "If no usable facts are available, you may use minimal model knowledge "
+        "and mark rationale accordingly."
+        if settings.allow_model_knowledge_fallback
+        else "If no usable facts are available, return empty cards instead of guessing."
+    )
+    return (
+        f"{compact_rule}\n"
+        f"{grounding_rule}\n"
+        f"{fallback_rule}\n"
+        f"Front max words: {settings.max_front_words}\n"
+        f"Back max words: {settings.max_back_words}"
+    )
+
+
 class CardVerificationService:
     """Service for verifying cards and generating improvements."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(self, provider: LLMProvider, config: dict | None = None):
         self.provider = provider
+        self.settings = AIPromptSettings.from_config(config)
+
+    def _temperature(self, default: float) -> float:
+        t = self.settings.temperature
+        if t is None:
+            return default
+        return max(0.0, min(1.5, float(t)))
 
     async def verify_card(
         self,
@@ -181,7 +275,11 @@ class CardVerificationService:
     ) -> CardVerification:
         """Verify if a card follows best practices (single information principle, etc.)."""
 
-        system_prompt = """You are an expert in spaced repetition and flashcard design. 
+        style_rules = _render_card_style_rules(self.settings)
+        verify_extra = self.settings.verify_prompt_extra.strip()
+        global_extra = self.settings.additional_instructions.strip()
+
+        system_prompt = """You are an expert in spaced repetition and flashcard design.
         Your task is to verify if a flashcard follows best practices:
         
         1. Single information principle: Each card should focus on ONE concept
@@ -200,7 +298,7 @@ class CardVerificationService:
             },
             "suggestions": [list of specific improvements],
             "recommended_card_types": [list of alternative card types that might work]
-        }"""
+        }""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
 
         deck_context_str = json.dumps(deck_context, ensure_ascii=False)
 
@@ -213,13 +311,17 @@ Deck Context:
 {deck_context_str}
 
 Return JSON response."""
+        if global_extra:
+            user_prompt += f"\n\nGlobal extra instructions:\n{global_extra}"
+        if verify_extra:
+            user_prompt += f"\n\nVerify-specific extra instructions:\n{verify_extra}"
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.3,
+                    temperature=self._temperature(0.3),
                     max_tokens=1000,
                 )
             )
@@ -259,6 +361,8 @@ Return JSON response."""
     ) -> list[dict]:
         """Build multiple cards that each focus on single information."""
 
+        style_rules = _render_card_style_rules(self.settings)
+        global_extra = self.settings.additional_instructions.strip()
         system_prompt = """You are an expert at applying the single information principle.
         Breaking down complex cards into simpler, single-concept cards.
         
@@ -271,7 +375,9 @@ Return JSON response."""
             }
         ]
         
-        Return ONLY valid JSON, no markdown or additional text."""
+        Return ONLY valid JSON, no markdown or additional text.""" + (
+            f"\n\nStyle and grounding constraints:\n{style_rules}"
+        )
 
         user_prompt = f"""Break this multi-concept card into single-information cards:
 
@@ -281,13 +387,15 @@ Back: {card_back}
 Context: {json.dumps(deck_context, ensure_ascii=False)}
 
 Create 2-3 simpler cards that each focus on ONE concept."""
+        if global_extra:
+            user_prompt += f"\n\nGlobal extra instructions:\n{global_extra}"
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.5,
+                    temperature=self._temperature(0.5),
                     max_tokens=800,
                 )
             )
@@ -300,15 +408,20 @@ Create 2-3 simpler cards that each focus on ONE concept."""
                 text = text.split("```")[1].split("```")[0]
 
             cards = json.loads(text.strip())
-            return [
+            compact_cards = [
                 {
                     "type": "single_info_replacement",
                     "concept": card.get("concept"),
-                    "front": card.get("front"),
-                    "back": card.get("back"),
+                    "front": _normalize_compact_text(
+                        card.get("front", ""), self.settings.max_front_words
+                    ),
+                    "back": _normalize_compact_text(
+                        card.get("back", ""), self.settings.max_back_words
+                    ),
                 }
                 for card in cards
             ]
+            return [c for c in compact_cards if c["front"] and c["back"]]
         except Exception as e:
             print(f"Error building single info cards: {e}")
             return []
@@ -323,10 +436,18 @@ Create 2-3 simpler cards that each focus on ONE concept."""
     ) -> MultiTypeCards:
         """Generate multiple different types of cards from the same information."""
 
+        style_rules = _render_card_style_rules(self.settings)
+        variant_extra = self.settings.variants_prompt_extra.strip()
+        global_extra = self.settings.additional_instructions.strip()
         system_prompt = """You are an expert in creating diverse flashcard types to test knowledge from different angles.
         
         Generate 3-4 different card types (e.g., definition, reverse, application, example).
         Each variant must focus on ONE piece of knowledge (single-information principle).
+        Think through these fixed internal steps before output:
+        1) Identify explicit source facts from the card and deck context.
+        2) Reject unsupported assumptions.
+        3) Select 3-4 complementary testing angles.
+        4) Produce concise cards using only supported facts.
 
         Respond with JSON only: either a JSON array, or an object { "cards": [ ... ] }.
         Each item:
@@ -335,7 +456,7 @@ Create 2-3 simpler cards that each focus on ONE concept."""
             "front": "question",
             "back": "answer",
             "rationale": "why this type helps"
-        }"""
+        }""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
 
         deck_context_str = json.dumps(deck_context, ensure_ascii=False)
         user_prompt = f"""Generate diverse card types from this information:
@@ -347,13 +468,17 @@ Deck context:
 {deck_context_str}
 
         Create 3–4 cards that test the same knowledge from different angles."""
+        if global_extra:
+            user_prompt += f"\n\nGlobal extra instructions:\n{global_extra}"
+        if variant_extra:
+            user_prompt += f"\n\nVariant-specific extra instructions:\n{variant_extra}"
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.55,
+                    temperature=self._temperature(0.55),
                     max_tokens=2048,
                 )
             )
@@ -403,8 +528,10 @@ Deck context:
                 cards.append(
                     {
                         "type": vtype,
-                        "front": front,
-                        "back": back,
+                        "front": _normalize_compact_text(
+                            front, self.settings.max_front_words
+                        ),
+                        "back": _normalize_compact_text(back, self.settings.max_back_words),
                         "rationale": rat,
                     }
                 )
@@ -425,14 +552,84 @@ Deck context:
 class CardGenerationService:
     """Service for generating cards from various media types."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(self, provider: LLMProvider, config: dict | None = None):
         self.provider = provider
+        self.settings = AIPromptSettings.from_config(config)
+
+    def _temperature(self, default: float) -> float:
+        t = self.settings.temperature
+        if t is None:
+            return default
+        return max(0.0, min(1.5, float(t)))
+
+    async def _extract_supported_facts(
+        self, source_text: str, deck_context: dict, *, purpose: str
+    ) -> list[str]:
+        """Agentic step 1: extract concise facts strictly supported by source/context."""
+        style_rules = _render_card_style_rules(self.settings)
+        system_prompt = """You are a strict fact extractor for flashcard generation.
+Return JSON only:
+{
+  "facts": ["fact 1", "fact 2"],
+  "has_enough_information": true
+}
+Use only explicit evidence from source text and deck context samples.
+Do not infer hidden facts."""
+        user_prompt = (
+            f"Purpose: {purpose}\n"
+            f"Source text:\n{source_text}\n\n"
+            f"Deck context:\n{json.dumps(deck_context, ensure_ascii=False)}\n\n"
+            "Extract at most 18 concise facts."
+        )
+        if self.settings.additional_instructions.strip():
+            user_prompt += (
+                "\n\nGlobal extra instructions:\n"
+                + self.settings.additional_instructions.strip()
+            )
+        response = await self.provider.complete(
+            AgentRequest(
+                system_prompt=system_prompt + f"\n\nConstraints:\n{style_rules}",
+                user_prompt=user_prompt,
+                temperature=self._temperature(0.15),
+                max_tokens=1200,
+            )
+        )
+        fragment = _extract_json_fragment_from_llm_text(response.text or "")
+        parsed = _parse_json_embedded(fragment)
+        if not isinstance(parsed, dict):
+            return []
+        facts_raw = parsed.get("facts")
+        if not isinstance(facts_raw, list):
+            return []
+        facts = []
+        for f in facts_raw:
+            fx = _normalize_compact_text(str(f or ""), self.settings.max_back_words + 6)
+            if fx:
+                facts.append(fx)
+        return facts[:18]
 
     async def generate_from_text(
         self, text: str, deck_context: dict, num_cards: int = 5
     ) -> list[dict[str, str]]:
         """Generate cards from plain text."""
         source_text = text
+
+        style_rules = _render_card_style_rules(self.settings)
+        facts: list[str] = []
+        if self.settings.agentic_enabled:
+            facts = await self._extract_supported_facts(
+                source_text, deck_context, purpose="generate flashcards from text"
+            )
+
+        if (
+            not facts
+            and self.settings.strict_source_grounding
+            and not self.settings.allow_model_knowledge_fallback
+        ):
+            return []
+
+        source_basis = "\n".join(f"- {f}" for f in facts) if facts else source_text
+        source_label = "extracted facts" if facts else "source text"
 
         system_prompt = f"""You are an expert at creating high-quality flashcards from text.
         
@@ -442,11 +639,16 @@ Each card should:
 - Have a clear, specific question on the front
 - Have a concise, accurate answer on the back
 - Be appropriate for the deck context
+Think through these fixed internal steps:
+1) select strongest supported facts
+2) map one fact per card
+3) compress wording to minimal useful terms
+4) check every card is grounded in provided evidence
 
 Respond with valid JSON array (no markdown):
 [
     {{"front": "question", "back": "answer", "tags": ["tag1", "tag2"]}}
-]"""
+]""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
 
         deck_info = json.dumps(
             {
@@ -455,20 +657,30 @@ Respond with valid JSON array (no markdown):
             }
         )
 
-        user_prompt = f"""Create {num_cards} flashcards from this text:
+        user_prompt = f"""Create {num_cards} flashcards from this {source_label}:
 
-{source_text}
+{source_basis}
 
 Deck context: {deck_info}
 
 Return valid JSON array only."""
+        if self.settings.additional_instructions.strip():
+            user_prompt += (
+                "\n\nGlobal extra instructions:\n"
+                + self.settings.additional_instructions.strip()
+            )
+        if self.settings.generation_prompt_extra.strip():
+            user_prompt += (
+                "\n\nGeneration-specific extra instructions:\n"
+                + self.settings.generation_prompt_extra.strip()
+            )
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.6,
+                    temperature=self._temperature(0.45),
                     max_tokens=2000,
                 )
             )
@@ -484,14 +696,19 @@ Return valid JSON array only."""
             if not isinstance(cards, list) or not cards:
                 raise ValueError("LLM returned no cards")
 
-            return [
+            out_cards = [
                 {
-                    "front": card.get("front", ""),
-                    "back": card.get("back", ""),
+                    "front": _normalize_compact_text(
+                        card.get("front", ""), self.settings.max_front_words
+                    ),
+                    "back": _normalize_compact_text(
+                        card.get("back", ""), self.settings.max_back_words
+                    ),
                     "tags": card.get("tags", []),
                 }
                 for card in cards
             ]
+            return [c for c in out_cards if c["front"] and c["back"]]
 
         except Exception as e:
             print(f"Error generating cards from text: {e}")
@@ -540,32 +757,61 @@ Return valid JSON array only."""
             "pdf": "This is from a PDF document. Focus on important concepts and key takeaways.",
         }
 
+        style_rules = _render_card_style_rules(self.settings)
+        facts: list[str] = []
+        if self.settings.agentic_enabled:
+            facts = await self._extract_supported_facts(
+                source_text, deck_context, purpose=f"generate flashcards from {image_type}"
+            )
+        if (
+            not facts
+            and self.settings.strict_source_grounding
+            and not self.settings.allow_model_knowledge_fallback
+        ):
+            return []
+        source_basis = "\n".join(f"- {f}" for f in facts) if facts else source_text
+
         system_prompt = f"""You are an expert at extracting flashcard content from visual materials.
 
 {type_instructions.get(image_type, "Extract the most important information.")}
 
 Generate {num_cards} high-quality flashcards applying the SINGLE INFORMATION PRINCIPLE.
 Each card focuses on ONE concept.
+Think through these fixed internal steps:
+1) list explicit evidence
+2) keep only verifiable facts
+3) generate concise one-fact cards
+4) remove unsupported claims
 
 Respond with valid JSON array (no markdown):
 [
     {{"front": "question", "back": "answer", "tags": ["tag1"]}}
-]"""
+]""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
 
         user_prompt = f"""Create {num_cards} flashcards from this {image_type} content:
 
-{source_text}
+{source_basis}
 
 Deck: {deck_context.get("deck_name", "Unknown")}
 
 Return valid JSON array only."""
+        if self.settings.additional_instructions.strip():
+            user_prompt += (
+                "\n\nGlobal extra instructions:\n"
+                + self.settings.additional_instructions.strip()
+            )
+        if self.settings.generation_prompt_extra.strip():
+            user_prompt += (
+                "\n\nGeneration-specific extra instructions:\n"
+                + self.settings.generation_prompt_extra.strip()
+            )
 
         try:
             response = await self.provider.complete(
                 AgentRequest(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    temperature=0.6,
+                    temperature=self._temperature(0.45),
                     max_tokens=2000,
                 )
             )
@@ -580,14 +826,19 @@ Return valid JSON array only."""
             cards = json.loads(resp_text.strip())
             if not isinstance(cards, list) or not cards:
                 raise ValueError("LLM returned no cards")
-            return [
+            out_cards = [
                 {
-                    "front": card.get("front", ""),
-                    "back": card.get("back", ""),
+                    "front": _normalize_compact_text(
+                        card.get("front", ""), self.settings.max_front_words
+                    ),
+                    "back": _normalize_compact_text(
+                        card.get("back", ""), self.settings.max_back_words
+                    ),
                     "tags": card.get("tags", []),
                 }
                 for card in cards
             ]
+            return [c for c in out_cards if c["front"] and c["back"]]
 
         except Exception as e:
             print(f"Error generating cards from image: {e}")

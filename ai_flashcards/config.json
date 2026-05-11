@@ -7,5 +7,15 @@
   "max_cards_per_run": 10,
   "temperature": 0.2,
   "add_menu_entry": true,
-  "gemini_api_key": ""
+  "gemini_api_key": "",
+  "ai_agentic_enabled": true,
+  "ai_strict_source_grounding": true,
+  "ai_allow_model_knowledge_fallback": false,
+  "ai_bullet_keywords_only": true,
+  "ai_max_front_words": 14,
+  "ai_max_back_words": 10,
+  "ai_additional_instructions": "",
+  "ai_generation_prompt_extra": "",
+  "ai_variants_prompt_extra": "",
+  "ai_verify_prompt_extra": ""
 }

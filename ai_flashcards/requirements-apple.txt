@@ -1,2 +1,3 @@
 # Apple Intelligence SDK (Swift build). Vendor only runs on macOS — see docs/development.md.
 apple-fm-sdk
+ocrmac>=0.1.10

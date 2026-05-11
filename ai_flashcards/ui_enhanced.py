@@ -1,10 +1,11 @@
 """Enhanced UI system for AI Flashcards with context awareness and better organization."""
 
 import asyncio
+import tempfile
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import (
@@ -35,6 +36,7 @@ from aqt.qt import (
     QAction,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QMenu,
 )
 from aqt.utils import qconnect, showInfo, showWarning
@@ -227,6 +229,37 @@ class CardSelector:
         return None
 
 
+class ImportDropTextEdit(QTextEdit):
+    """QTextEdit that accepts dropped files and forwards their paths."""
+
+    def __init__(
+        self, on_files_dropped: Callable[[list[str]], None], parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._on_files_dropped = on_files_dropped
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        md = event.mimeData()
+        if md and md.hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        md = event.mimeData()
+        if md and md.hasUrls():
+            paths: list[str] = []
+            for u in md.urls():
+                if u.isLocalFile():
+                    paths.append(u.toLocalFile())
+            if paths:
+                self._on_files_dropped(paths)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
+
+
 class EnhancedUI:
     """Enhanced UI with context awareness and better organization."""
 
@@ -296,6 +329,11 @@ class EnhancedUI:
             qconnect(action_context.triggered, self.show_context_dialog)
             menu.addAction(action_context)
             self.state.menu_actions["context"] = action_context
+
+            action_settings = QAction("AI Settings", mw)
+            qconnect(action_settings.triggered, self.show_settings_dialog)
+            menu.addAction(action_settings)
+            self.state.menu_actions["settings"] = action_settings
 
             self._log_debug("Menu successfully registered")
         except Exception as e:
@@ -647,6 +685,31 @@ class EnhancedUI:
 
         dialog.exec()
 
+    def show_settings_dialog(self) -> None:
+        """Show standalone AI settings dialog from menu bar."""
+        if not mw.col:
+            showWarning("Anki is still loading. Please wait a moment and try again.")
+            return
+
+        dialog = QDialog(mw)
+        dialog.setWindowTitle("AI Flashcards Settings")
+        dialog.setMinimumSize(760, 700)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self._create_settings_tab(), stretch=1)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        close_btn = button_box.button(QDialogButtonBox.StandardButton.Close)
+        if close_btn is not None:
+            close_btn.setAutoDefault(False)
+            close_btn.setDefault(False)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
     def _quick_verify(self, card: CardInfo, parent_dialog: QDialog) -> None:
         """Quickly verify the given card."""
         if self.tag_manager and self.tag_manager.is_ai_verified(card.tags):
@@ -660,7 +723,7 @@ class EnhancedUI:
             try:
                 config = mw.addonManager.getConfig("ai_flashcards") or {}
                 provider = build_provider(config)
-                service = CardVerificationService(provider)
+                service = CardVerificationService(provider, config)
 
                 deck_context = AnkiService.get_deck_context(card.deck_name)
                 result = await service.verify_card(card.front, card.back, deck_context)
@@ -700,7 +763,7 @@ class EnhancedUI:
             try:
                 config = mw.addonManager.getConfig("ai_flashcards") or {}
                 provider = build_provider(config)
-                service = CardVerificationService(provider)
+                service = CardVerificationService(provider, config)
 
                 deck_context = AnkiService.get_deck_context(card.deck_name)
                 result = await service.generate_multi_type_cards(
@@ -876,7 +939,7 @@ class EnhancedUI:
             try:
                 config = mw.addonManager.getConfig("ai_flashcards") or {}
                 provider = build_provider(config)
-                service = CardVerificationService(provider)
+                service = CardVerificationService(provider, config)
 
                 verify_button.setEnabled(False)
                 blocks: list[str] = []
@@ -999,7 +1062,7 @@ class EnhancedUI:
             try:
                 config = mw.addonManager.getConfig("ai_flashcards") or {}
                 provider = build_provider(config)
-                service = CardVerificationService(provider)
+                service = CardVerificationService(provider, config)
 
                 generate_button.setEnabled(False)
                 blocks: list[str] = []
@@ -1143,9 +1206,25 @@ class EnhancedUI:
 
         layout.addWidget(QLabel("Content"))
 
-        # Content input — only this block grows; controls stay above/below visibly
-        content_display = QTextEdit()
-        content_display.setPlaceholderText("Enter text content here...")
+        # Content input — supports drag/drop file import.
+        def import_files(paths: list[str]) -> None:
+            if not paths:
+                return
+            imported_any = False
+            for idx, p in enumerate(paths):
+                if import_file_path(p):
+                    imported_any = True
+                    if idx > 0:
+                        break
+            if not imported_any:
+                file_feedback.setText(
+                    "Dropped items were not supported files. Use PDF, PPTX, images, or text files."
+                )
+
+        content_display = ImportDropTextEdit(import_files)
+        content_display.setPlaceholderText(
+            "Enter text or drag/drop PDF, PPTX, image, txt, or md file here..."
+        )
         content_display.setMinimumHeight(140)
         content_display.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -1156,26 +1235,7 @@ class EnhancedUI:
         file_feedback.setWordWrap(True)
         layout.addWidget(file_feedback)
 
-        # File button (no auto-default: stray Enter must not open the picker)
-        file_button = QPushButton("Select File...")
-        file_button.setAutoDefault(False)
-        file_button.setDefault(False)
-
-        def select_file():
-            file_feedback.clear()
-            dlg_opts = QFileDialog.Option.DontUseNativeDialog
-            file_path, _ = QFileDialog.getOpenFileName(
-                parent_dialog,
-                "Select File",
-                str(Path.home()),
-                "Supported (*.pdf *.pptx *.png *.jpg *.jpeg *.bmp *.tiff *.txt *.md);;"
-                "PDF (*.pdf);;PowerPoint (*.pptx);;"
-                "Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Text (*.txt *.md)",
-                options=dlg_opts,
-            )
-            if not file_path:
-                return
-
+        def import_file_path(file_path: str) -> bool:
             try:
                 import importlib
 
@@ -1185,7 +1245,7 @@ class EnhancedUI:
                         "That path is not a regular file (e.g. a folder). Pick a PDF, "
                         "PPTX, image, or text file."
                     )
-                    return
+                    return False
                 suffix = p.suffix.lower()
 
                 if suffix in (".txt", ".md", ".markdown"):
@@ -1193,7 +1253,8 @@ class EnhancedUI:
                         p.read_text(encoding="utf-8", errors="replace").strip()
                     )
                     source_combo.setCurrentIndex(0)
-                    return
+                    file_feedback.setText(f"Loaded text from {p.name}")
+                    return True
 
                 if suffix == ".pdf":
                     try:
@@ -1214,32 +1275,55 @@ class EnhancedUI:
                             texts = [pg.extract_text() or "" for pg in reader.pages]
                             extracted = "\n\n".join(texts).strip()
                             content_display.setPlainText(
-                                extracted
-                                or f"[PDF: no text extracted from {file_path}]"
+                                extracted or f"[PDF: no text extracted from {file_path}]"
                             )
                         except Exception:
                             content_display.setPlainText(
                                 f"[PDF content from {file_path} - install pdfplumber or PyPDF2 for extraction]"
                             )
                     source_combo.setCurrentText("PDF File")
+                    file_feedback.setText(f"Imported PDF: {p.name}")
+                    return True
 
-                elif suffix in (".png", ".jpg", ".jpeg", ".bmp", ".tiff"):
+                if suffix in (".png", ".jpg", ".jpeg", ".bmp", ".tiff"):
                     try:
                         Image = importlib.import_module("PIL.Image")
                         pytesseract = importlib.import_module("pytesseract")
 
                         img = Image.open(file_path)
                         extracted = pytesseract.image_to_string(img)
-                        content_display.setPlainText(
-                            extracted or f"[Image: no text found in {file_path}]"
-                        )
+                        if extracted and extracted.strip():
+                            content_display.setPlainText(extracted)
+                        else:
+                            file_feedback.setText(
+                                "No readable text detected in image (OCR returned empty)."
+                            )
+                            return False
                     except Exception:
-                        content_display.setPlainText(
-                            f"[Image text from {file_path} - install pillow+pytesseract for OCR]"
-                        )
+                        # macOS fallback: ocrmac uses native Vision OCR, no tesseract binary.
+                        try:
+                            ocrmac = importlib.import_module("ocrmac")
+                            annots = ocrmac.OCR(file_path).recognize()  # type: ignore[attr-defined]
+                            lines = [str(a[0]).strip() for a in annots if a and a[0]]
+                            extracted = "\n".join(x for x in lines if x)
+                            if extracted.strip():
+                                content_display.setPlainText(extracted)
+                            else:
+                                file_feedback.setText(
+                                    "No readable text detected in image (OCR returned empty)."
+                                )
+                                return False
+                        except Exception:
+                            file_feedback.setText(
+                                "Image OCR is unavailable. Rebuild/install with vendored deps "
+                                "(--with-vendor) to include OCR libs."
+                            )
+                            return False
                     source_combo.setCurrentText("Screenshot/Image")
+                    file_feedback.setText(f"Imported image: {p.name}")
+                    return True
 
-                elif suffix in (".pptx",):
+                if suffix in (".pptx",):
                     try:
                         Presentation = importlib.import_module("pptx").Presentation
                         prs = Presentation(file_path)
@@ -1257,17 +1341,98 @@ class EnhancedUI:
                             f"[Presentation content from {file_path} - install python-pptx for extraction]"
                         )
                     source_combo.setCurrentText("Presentation Slide")
+                    file_feedback.setText(f"Imported presentation: {p.name}")
+                    return True
 
-                else:
-                    file_feedback.setText(
-                        f"Unsupported type “{suffix or '(none)'}”. "
-                        "Use PDF, PPTX, common images, or .txt/.md — or paste text above."
-                    )
+                file_feedback.setText(
+                    f"Unsupported type “{suffix or '(none)'}”. "
+                    "Use PDF, PPTX, common images, or .txt/.md — or paste text above."
+                )
+                return False
             except Exception as e:
                 file_feedback.setText(f"Could not read file: {e}")
+                return False
+
+        # File button (no auto-default: stray Enter must not open the picker)
+        file_button = QPushButton("Select File...")
+        file_button.setAutoDefault(False)
+        file_button.setDefault(False)
+        clipboard_button = QPushButton("Import from Clipboard")
+        clipboard_button.setAutoDefault(False)
+        clipboard_button.setDefault(False)
+
+        def select_file():
+            file_feedback.clear()
+            dlg_opts = QFileDialog.Option.DontUseNativeDialog
+            file_path, _ = QFileDialog.getOpenFileName(
+                parent_dialog,
+                "Select File",
+                str(Path.home()),
+                "Supported (*.pdf *.pptx *.png *.jpg *.jpeg *.bmp *.tiff *.txt *.md);;"
+                "PDF (*.pdf);;PowerPoint (*.pptx);;"
+                "Images (*.png *.jpg *.jpeg *.bmp *.tiff);;Text (*.txt *.md)",
+                options=dlg_opts,
+            )
+            if not file_path:
+                return
+            import_file_path(file_path)
+
+        def import_from_clipboard() -> None:
+            file_feedback.clear()
+            clip = QApplication.clipboard()
+            md = clip.mimeData()
+            if md is None:
+                file_feedback.setText("Clipboard is empty.")
+                return
+
+            if md.hasUrls():
+                local_files = [u.toLocalFile() for u in md.urls() if u.isLocalFile()]
+                if local_files:
+                    import_files(local_files)
+                    return
+
+            if md.hasImage():
+                try:
+                    img = clip.image()
+                    if img.isNull():
+                        file_feedback.setText("Clipboard image is empty.")
+                        return
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as tmpf:
+                        tmp_path = tmpf.name
+                    if not img.save(tmp_path, "PNG"):
+                        file_feedback.setText("Could not read clipboard image.")
+                        return
+                    if import_file_path(tmp_path):
+                        file_feedback.setText("Imported image from clipboard.")
+                    else:
+                        file_feedback.setText(
+                            "Clipboard image import failed (OCR tools may be missing)."
+                        )
+                except Exception as e:
+                    file_feedback.setText(f"Could not import clipboard image: {e}")
+                return
+
+            if md.hasText():
+                txt = md.text().strip()
+                if txt:
+                    content_display.setPlainText(txt)
+                    source_combo.setCurrentIndex(0)
+                    file_feedback.setText("Imported plain text from clipboard.")
+                    return
+
+            file_feedback.setText(
+                "Clipboard has no supported content. Copy text, a file, or an image."
+            )
 
         file_button.clicked.connect(select_file)
-        layout.addWidget(file_button)
+        clipboard_button.clicked.connect(import_from_clipboard)
+        file_btn_row = QHBoxLayout()
+        file_btn_row.addWidget(file_button)
+        file_btn_row.addWidget(clipboard_button)
+        file_btn_row.addStretch()
+        layout.addLayout(file_btn_row)
 
         # Debug — fixed band so it never collides with editors
         layout.addWidget(QLabel("Debug"))
@@ -1308,7 +1473,7 @@ class EnhancedUI:
             try:
                 config = mw.addonManager.getConfig("ai_flashcards") or {}
                 provider = build_provider(config)
-                service = CardGenerationService(provider)
+                service = CardGenerationService(provider, config)
 
                 deck_context = AnkiService.get_deck_context(deck_name)
 
@@ -1351,6 +1516,162 @@ class EnhancedUI:
         layout.addWidget(generate_button)
 
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        return widget
+
+    def _default_ai_settings(self) -> dict:
+        return {
+            "ai_agentic_enabled": True,
+            "ai_strict_source_grounding": True,
+            "ai_allow_model_knowledge_fallback": False,
+            "ai_bullet_keywords_only": True,
+            "ai_max_front_words": 14,
+            "ai_max_back_words": 10,
+            "ai_additional_instructions": "",
+            "ai_generation_prompt_extra": "",
+            "ai_variants_prompt_extra": "",
+            "ai_verify_prompt_extra": "",
+        }
+
+    def _load_addon_config(self) -> dict:
+        cfg = mw.addonManager.getConfig("ai_flashcards") or {}
+        out = dict(cfg)
+        for k, v in self._default_ai_settings().items():
+            out.setdefault(k, v)
+        return out
+
+    def _save_addon_config(self, cfg: dict) -> None:
+        mw.addonManager.writeConfig("ai_flashcards", cfg)
+
+    def _create_settings_tab(self) -> QWidget:
+        """Create AI behavior/prompt settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        cfg = self._load_addon_config()
+        defaults = self._default_ai_settings()
+
+        layout.addWidget(
+            QLabel(
+                "Tune AI behavior: grounded generation, compact output, and custom prompts."
+            )
+        )
+
+        cb_agentic = QCheckBox("Enable agentic multi-step reasoning")
+        cb_agentic.setChecked(bool(cfg.get("ai_agentic_enabled", True)))
+        layout.addWidget(cb_agentic)
+
+        cb_grounded = QCheckBox("Strict source grounding (avoid hallucinations)")
+        cb_grounded.setChecked(bool(cfg.get("ai_strict_source_grounding", True)))
+        layout.addWidget(cb_grounded)
+
+        cb_fallback = QCheckBox("Allow model knowledge only if source evidence is missing")
+        cb_fallback.setChecked(bool(cfg.get("ai_allow_model_knowledge_fallback", False)))
+        layout.addWidget(cb_fallback)
+
+        cb_keywords = QCheckBox("Prefer bullet-like keywords (avoid long sentences)")
+        cb_keywords.setChecked(bool(cfg.get("ai_bullet_keywords_only", True)))
+        layout.addWidget(cb_keywords)
+
+        row_words = QHBoxLayout()
+        row_words.addWidget(QLabel("Max words (front/back):"))
+        sp_front = QSpinBox()
+        sp_front.setRange(4, 40)
+        sp_front.setValue(int(cfg.get("ai_max_front_words", 14) or 14))
+        sp_back = QSpinBox()
+        sp_back.setRange(3, 40)
+        sp_back.setValue(int(cfg.get("ai_max_back_words", 10) or 10))
+        row_words.addWidget(sp_front)
+        row_words.addWidget(QLabel("/"))
+        row_words.addWidget(sp_back)
+        row_words.addStretch()
+        layout.addLayout(row_words)
+
+        row_temp = QHBoxLayout()
+        row_temp.addWidget(QLabel("Model temperature:"))
+        sp_temp = QDoubleSpinBox()
+        sp_temp.setRange(0.0, 1.5)
+        sp_temp.setDecimals(2)
+        sp_temp.setSingleStep(0.05)
+        sp_temp.setValue(float(cfg.get("temperature", 0.2) or 0.2))
+        row_temp.addWidget(sp_temp)
+        row_temp.addStretch()
+        layout.addLayout(row_temp)
+
+        layout.addWidget(QLabel("Global extra instructions"))
+        te_global = QTextEdit()
+        te_global.setPlainText(str(cfg.get("ai_additional_instructions", "")))
+        te_global.setPlaceholderText("Applied to verify, variants, and media generation.")
+        te_global.setMaximumHeight(90)
+        layout.addWidget(te_global)
+
+        layout.addWidget(QLabel("Generation prompt extra"))
+        te_gen = QTextEdit()
+        te_gen.setPlainText(str(cfg.get("ai_generation_prompt_extra", "")))
+        te_gen.setMaximumHeight(80)
+        layout.addWidget(te_gen)
+
+        layout.addWidget(QLabel("Variants prompt extra"))
+        te_var = QTextEdit()
+        te_var.setPlainText(str(cfg.get("ai_variants_prompt_extra", "")))
+        te_var.setMaximumHeight(80)
+        layout.addWidget(te_var)
+
+        layout.addWidget(QLabel("Verify prompt extra"))
+        te_ver = QTextEdit()
+        te_ver.setPlainText(str(cfg.get("ai_verify_prompt_extra", "")))
+        te_ver.setMaximumHeight(80)
+        layout.addWidget(te_ver)
+
+        status = QLabel("")
+        status.setStyleSheet("color: #2E7D32;")
+        layout.addWidget(status)
+
+        btn_row = QHBoxLayout()
+        btn_save = QPushButton("Save Settings")
+        btn_save.setAutoDefault(False)
+        btn_save.setDefault(False)
+        btn_reset = QPushButton("Reset AI Defaults")
+        btn_reset.setAutoDefault(False)
+        btn_reset.setDefault(False)
+        btn_row.addWidget(btn_save)
+        btn_row.addWidget(btn_reset)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        def apply_defaults_ui() -> None:
+            cb_agentic.setChecked(bool(defaults["ai_agentic_enabled"]))
+            cb_grounded.setChecked(bool(defaults["ai_strict_source_grounding"]))
+            cb_fallback.setChecked(bool(defaults["ai_allow_model_knowledge_fallback"]))
+            cb_keywords.setChecked(bool(defaults["ai_bullet_keywords_only"]))
+            sp_front.setValue(int(defaults["ai_max_front_words"]))
+            sp_back.setValue(int(defaults["ai_max_back_words"]))
+            te_global.setPlainText(str(defaults["ai_additional_instructions"]))
+            te_gen.setPlainText(str(defaults["ai_generation_prompt_extra"]))
+            te_var.setPlainText(str(defaults["ai_variants_prompt_extra"]))
+            te_ver.setPlainText(str(defaults["ai_verify_prompt_extra"]))
+            status.setText("Loaded default AI values. Click Save Settings to persist.")
+
+        def save_settings() -> None:
+            new_cfg = self._load_addon_config()
+            new_cfg["ai_agentic_enabled"] = cb_agentic.isChecked()
+            new_cfg["ai_strict_source_grounding"] = cb_grounded.isChecked()
+            new_cfg["ai_allow_model_knowledge_fallback"] = cb_fallback.isChecked()
+            new_cfg["ai_bullet_keywords_only"] = cb_keywords.isChecked()
+            new_cfg["ai_max_front_words"] = int(sp_front.value())
+            new_cfg["ai_max_back_words"] = int(sp_back.value())
+            new_cfg["temperature"] = float(sp_temp.value())
+            new_cfg["ai_additional_instructions"] = te_global.toPlainText().strip()
+            new_cfg["ai_generation_prompt_extra"] = te_gen.toPlainText().strip()
+            new_cfg["ai_variants_prompt_extra"] = te_var.toPlainText().strip()
+            new_cfg["ai_verify_prompt_extra"] = te_ver.toPlainText().strip()
+            self._save_addon_config(new_cfg)
+            status.setText("AI settings saved. New runs use the updated behavior.")
+
+        btn_save.clicked.connect(save_settings)
+        btn_reset.clicked.connect(apply_defaults_ui)
+        layout.addStretch()
         return widget
 
     def _note_type_from_config(self, default: str = "Basic") -> str:
