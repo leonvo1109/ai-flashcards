@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -50,6 +51,7 @@ from .card_services import (
     MultiTypeCards,
 )
 from .llm.factory import build_provider
+from .llm.gemini_config import DEFAULT_GEMINI_MODEL, GEMINI_MODEL_CHOICES
 from .tag_system import TagManager
 
 
@@ -689,14 +691,10 @@ class EnhancedUI:
         dialog.exec()
 
     def show_settings_dialog(self) -> None:
-        """Show standalone AI settings dialog from menu bar."""
-        if not mw.col:
-            showWarning("Anki is still loading. Please wait a moment and try again.")
-            return
-
+        """Show AI settings (provider, Gemini key/model, prompts). Menu: AI Flashcards → AI Settings."""
         dialog = QDialog(mw)
         dialog.setWindowTitle("AI Flashcards Settings")
-        dialog.setMinimumSize(760, 700)
+        dialog.setMinimumSize(760, 720)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -1548,6 +1546,13 @@ class EnhancedUI:
 
     def _create_settings_tab(self) -> QWidget:
         """Create AI behavior/prompt settings tab."""
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -1555,6 +1560,80 @@ class EnhancedUI:
 
         cfg = self._load_addon_config()
         defaults = self._default_ai_settings()
+
+        grp_prov = QGroupBox("Provider & Gemini model")
+        gl = QVBoxLayout(grp_prov)
+
+        row_provider = QHBoxLayout()
+        row_provider.addWidget(QLabel("Provider:"))
+        combo_provider = QComboBox()
+        combo_provider.addItem("Google (Gemini)", "google")
+        combo_provider.addItem("Apple Intelligence (macOS)", "apple")
+        cur_prov = str(cfg.get("provider") or "google").strip().lower()
+        for i in range(combo_provider.count()):
+            if combo_provider.itemData(i) == cur_prov:
+                combo_provider.setCurrentIndex(i)
+                break
+        else:
+            combo_provider.setCurrentIndex(0)
+        row_provider.addWidget(combo_provider, stretch=1)
+        gl.addLayout(row_provider)
+
+        lbl_hint_apple = QLabel(
+            "Apple Intelligence uses the on-device model; the API key and Gemini model "
+            "below apply only when Google is selected."
+        )
+        lbl_hint_apple.setWordWrap(True)
+        lbl_hint_apple.setStyleSheet("color: #666;")
+        gl.addWidget(lbl_hint_apple)
+
+        row_key = QHBoxLayout()
+        lbl_key = QLabel("Gemini API key:")
+        le_api_key = QLineEdit()
+        le_api_key.setText(str(cfg.get("gemini_api_key") or ""))
+        le_api_key.setPlaceholderText(
+            "From Google AI Studio, or leave empty if GOOGLE_API_KEY is set"
+        )
+        le_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        cb_show_key = QCheckBox("Show")
+        row_key.addWidget(lbl_key)
+        row_key.addWidget(le_api_key, stretch=1)
+        row_key.addWidget(cb_show_key)
+        gl.addLayout(row_key)
+
+        def toggle_key_echo(checked: bool) -> None:
+            le_api_key.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+
+        cb_show_key.toggled.connect(toggle_key_echo)
+
+        row_model = QHBoxLayout()
+        lbl_model = QLabel("Gemini model:")
+        combo_model = QComboBox()
+        combo_model.setEditable(True)
+        for m in GEMINI_MODEL_CHOICES:
+            combo_model.addItem(m)
+        combo_model.setCurrentText(
+            (cfg.get("model") or "").strip() or DEFAULT_GEMINI_MODEL
+        )
+        row_model.addWidget(lbl_model)
+        row_model.addWidget(combo_model, stretch=1)
+        gl.addLayout(row_model)
+
+        layout.addWidget(grp_prov)
+
+        def sync_provider_widgets() -> None:
+            is_google = combo_provider.currentData() == "google"
+            lbl_key.setVisible(is_google)
+            le_api_key.setVisible(is_google)
+            cb_show_key.setVisible(is_google)
+            lbl_model.setVisible(is_google)
+            combo_model.setVisible(is_google)
+            lbl_hint_apple.setVisible(not is_google)
+
+        combo_provider.currentIndexChanged.connect(lambda _i: sync_provider_widgets())
+        sync_provider_widgets()
 
         layout.addWidget(
             QLabel(
@@ -1665,6 +1744,9 @@ class EnhancedUI:
 
         def save_settings() -> None:
             new_cfg = self._load_addon_config()
+            new_cfg["provider"] = combo_provider.currentData()
+            new_cfg["gemini_api_key"] = le_api_key.text().strip()
+            new_cfg["model"] = combo_model.currentText().strip()
             new_cfg["ai_agentic_enabled"] = cb_agentic.isChecked()
             new_cfg["ai_strict_source_grounding"] = cb_grounded.isChecked()
             new_cfg["ai_allow_model_knowledge_fallback"] = cb_fallback.isChecked()
@@ -1677,12 +1759,15 @@ class EnhancedUI:
             new_cfg["ai_variants_prompt_extra"] = te_var.toPlainText().strip()
             new_cfg["ai_verify_prompt_extra"] = te_ver.toPlainText().strip()
             self._save_addon_config(new_cfg)
-            status.setText("AI settings saved. New runs use the updated behavior.")
+            status.setText("Settings saved. New runs use the updated configuration.")
 
         btn_save.clicked.connect(save_settings)
         btn_reset.clicked.connect(apply_defaults_ui)
         layout.addStretch()
-        return widget
+
+        scroll.setWidget(widget)
+        outer_layout.addWidget(scroll)
+        return outer
 
     def _note_type_from_config(self, default: str = "Basic") -> str:
         try:

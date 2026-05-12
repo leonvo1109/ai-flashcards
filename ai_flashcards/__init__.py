@@ -4,7 +4,13 @@ from pathlib import Path
 
 _addon_dir = Path(__file__).resolve().parent
 _lib_dir = _addon_dir / "lib"
-if _lib_dir.exists() and str(_lib_dir) not in sys.path:
+# Prepend bundled wheels only in normal Anki runs. Pytest sets AI_FLASHCARDS_LITE_IMPORT=1
+# so `google.*` resolves to the environment's google-genai instead of a stale vendored tree.
+if (
+    _lib_dir.exists()
+    and os.getenv("AI_FLASHCARDS_LITE_IMPORT") != "1"
+    and str(_lib_dir) not in sys.path
+):
     sys.path.insert(0, str(_lib_dir))
 
 

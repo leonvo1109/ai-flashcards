@@ -30,6 +30,7 @@ def test_build_provider_google_requires_key(monkeypatch):
             )
 
     setattr(stub, "GoogleProvider", RaisesMissingGeminiKey)
+    setattr(stub, "DEFAULT_GEMINI_MODEL", "gemini-2.0-flash")
 
     monkeypatch.delitem(
         sys.modules, "ai_flashcards.llm.providers.google_provider", raising=False

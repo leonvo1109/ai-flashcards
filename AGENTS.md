@@ -4,7 +4,7 @@ This repository is the **AI Flashcards** Anki add-on. Runtime code lives under [
 
 ## Imports and tests
 
-- **`AI_FLASHCARDS_LITE_IMPORT=1`** — When set (see [`tests/conftest.py`](tests/conftest.py)), importing `ai_flashcards` does **not** register Qt hooks or construct UI. Pytest sets this before loading app code.
+- **`AI_FLASHCARDS_LITE_IMPORT=1`** — When set (see [`tests/conftest.py`](tests/conftest.py)), importing `ai_flashcards` does **not** register Qt hooks or construct UI, and **`ai_flashcards/lib/` is not prepended to `sys.path`** so PyPI packages (e.g. `google-genai`) are used instead of any incomplete vendored copy under the add-on folder. Pytest sets this before loading app code.
 - Prefer **`from ai_flashcards…`** in tests; shared doubles live in **`tests/support/`**.
 - Automated tests are **`tests/unit/test_*.py`** (pytest discovers them via `testpaths = ["tests"]`).
 

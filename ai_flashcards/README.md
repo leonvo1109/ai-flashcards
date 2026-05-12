@@ -10,13 +10,15 @@ Tag/hierarchy metadata is stored beside the profile in `ai_flashcards_tags/` (se
 
 ## Configuration
 
-**Tools → Add-ons → AI Flashcards → Config**
+Use **Menu bar → AI Flashcards → AI Settings** for the graphical panel (provider, Gemini API key, model, AI behavior).
+
+**Tools → Add-ons → AI Flashcards → Config** opens Anki’s JSON editor for the same keys if you prefer editing `meta.json` directly.
 
 | Field | Meaning |
 |-------|--------|
 | `provider` | `"google"` (Gemini) or `"apple"` (macOS on-device, where available) |
 | `gemini_api_key` | Google AI API key; optional if `GOOGLE_API_KEY` is set in the environment |
-| `model` | Gemini model id (provider-specific default if empty) |
+| `model` | Gemini model id (defaults to `gemini-2.0-flash` if empty). Presets in settings include 2.0 / 2.5 Flash and Pro variants; you can type another id. |
 | `target_deck` | Deck for new notes |
 | `note_type` | Note type name (often `Basic`) |
 | `temperature` | LLM sampling temperature |

@@ -17,7 +17,7 @@
 Python **3.13+**. Formatter: **Black** (88 columns). Linter: **Ruff** (see [`pyproject.toml`](../pyproject.toml)).
 
 ```bash
-uv sync --all-groups
+uv sync --all-groups   # installs dev tools + google-genai for tests (Lite import skips bundled lib/)
 uv run ruff check ai_flashcards scripts tests runanki.py
 uv run black --check ai_flashcards scripts tests runanki.py
 uv run pytest tests/
