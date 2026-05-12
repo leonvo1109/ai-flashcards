@@ -63,8 +63,12 @@ class AIPromptSettings:
             bullet_keywords_only=bool(cfg.get("ai_bullet_keywords_only", True)),
             max_front_words=max(4, int(cfg.get("ai_max_front_words", 14) or 14)),
             max_back_words=max(3, int(cfg.get("ai_max_back_words", 10) or 10)),
-            additional_instructions=str(cfg.get("ai_additional_instructions", "") or ""),
-            generation_prompt_extra=str(cfg.get("ai_generation_prompt_extra", "") or ""),
+            additional_instructions=str(
+                cfg.get("ai_additional_instructions", "") or ""
+            ),
+            generation_prompt_extra=str(
+                cfg.get("ai_generation_prompt_extra", "") or ""
+            ),
             variants_prompt_extra=str(cfg.get("ai_variants_prompt_extra", "") or ""),
             verify_prompt_extra=str(cfg.get("ai_verify_prompt_extra", "") or ""),
             temperature=float(cfg["temperature"]) if "temperature" in cfg else None,
@@ -95,28 +99,40 @@ def _repair_common_json_issues(s: str) -> str:
 def _parse_json_embedded(fragment: str) -> object | None:
     """Parse JSON possibly preceded/followed by prose; tolerate minor damage."""
     s = fragment.strip()
+    if not s:
+        return None
     decoder = json.JSONDecoder()
-    for i, ch in enumerate(s):
-        if ch in "[{":
-            try:
-                obj, _ = decoder.raw_decode(s, i)
+
+    candidates = (s, _repair_common_json_issues(s))
+    for cand in candidates:
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            pass
+
+    for cand in candidates:
+        if cand[0] not in "[{":
+            continue
+        try:
+            obj, end = decoder.raw_decode(cand, 0)
+            if cand[end:].strip() == "":
                 return obj
+        except json.JSONDecodeError:
+            pass
+
+    for cand in candidates:
+        for i, ch in enumerate(cand):
+            if ch not in "[{":
+                continue
+            try:
+                obj, _end = decoder.raw_decode(cand, i)
             except json.JSONDecodeError:
                 continue
-
-    repaired = _repair_common_json_issues(s)
-    for i, ch in enumerate(repaired):
-        if ch in "[{":
-            try:
-                obj, _ = decoder.raw_decode(repaired, i)
-                return obj
-            except json.JSONDecodeError:
+            # Do not treat nested empty arrays (e.g. "tags": []) as the root value.
+            if isinstance(obj, list) and len(obj) == 0 and i > 0:
                 continue
+            return obj
 
-    try:
-        return json.loads(_repair_common_json_issues(s))
-    except json.JSONDecodeError:
-        pass
     return None
 
 
@@ -192,6 +208,35 @@ def _coerce_card_object_list(parsed: object) -> list[dict]:
         if fallback:
             return [_flatten_card_payload(x) for x in fallback]
 
+    return []
+
+
+_GENERATION_LIST_KEYS = ("cards", "items", "results", "flashcards", "generated_cards")
+
+
+def _coerce_generation_card_list(parsed: object) -> list[dict]:
+    """Normalize generate_from_text / image responses: array or {cards: [...]}."""
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        for key in _GENERATION_LIST_KEYS:
+            v = parsed.get(key)
+            if isinstance(v, list):
+                lst = [x for x in v if isinstance(x, dict)]
+                if lst:
+                    return lst
+    return []
+
+
+def _coerce_single_info_card_list(parsed: object) -> list[dict]:
+    """Normalize replacement-card arrays from the LLM."""
+    if isinstance(parsed, list):
+        return [x for x in parsed if isinstance(x, dict)]
+    if isinstance(parsed, dict):
+        for key in _GENERATION_LIST_KEYS:
+            v = parsed.get(key)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
     return []
 
 
@@ -326,16 +371,30 @@ Return JSON response."""
                 )
             )
 
-            # Parse the JSON response
-            result = json.loads(response.text)
+            fragment = _extract_json_fragment_from_llm_text(
+                response.text if response.text is not None else ""
+            )
+            parsed = _parse_json_embedded(fragment)
+            if not isinstance(parsed, dict):
+                raise ValueError("Verification response was not a JSON object")
+
+            violations_raw = parsed.get("violations")
+            violations: dict = (
+                violations_raw if isinstance(violations_raw, dict) else {}
+            )
+
+            issues_raw = parsed.get("issues")
+            issues: list[str] = (
+                [str(x) for x in issues_raw] if isinstance(issues_raw, list) else []
+            )
+
+            is_valid = bool(parsed["is_valid"]) if "is_valid" in parsed else True
 
             # Build suggested improvements when the card fails validation or breaks
             # the single-information principle.
             suggested_improvements: list[dict] = []
-            single_violation = result.get("violations", {}).get(
-                "single_info_principle", False
-            )
-            not_valid = not result.get("is_valid", True)
+            single_violation = bool(violations.get("single_info_principle", False))
+            not_valid = not is_valid
             if single_violation or not_valid:
                 build_cards = await self._build_single_info_cards(
                     card_front, card_back, deck_context
@@ -343,15 +402,15 @@ Return JSON response."""
                 suggested_improvements.extend(build_cards)
 
             return CardVerification(
-                is_valid=result.get("is_valid", True),
-                issues=result.get("issues", []),
+                is_valid=is_valid,
+                issues=issues,
                 suggested_improvements=suggested_improvements,
             )
 
         except Exception as e:
             print(f"Error verifying card: {e}")
             return CardVerification(
-                is_valid=True,
+                is_valid=False,
                 issues=[f"Verification error: {str(e)}"],
                 suggested_improvements=[],
             )
@@ -400,14 +459,13 @@ Create 2-3 simpler cards that each focus on ONE concept."""
                 )
             )
 
-            # Extract JSON from response (might have markdown formatting)
-            text = response.text
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-
-            cards = json.loads(text.strip())
+            fragment = _extract_json_fragment_from_llm_text(
+                response.text if response.text is not None else ""
+            )
+            parsed = _parse_json_embedded(fragment)
+            cards = _coerce_single_info_card_list(parsed)
+            if not cards:
+                raise ValueError("No replacement cards in LLM response")
             compact_cards = [
                 {
                     "type": "single_info_replacement",
@@ -439,7 +497,8 @@ Create 2-3 simpler cards that each focus on ONE concept."""
         style_rules = _render_card_style_rules(self.settings)
         variant_extra = self.settings.variants_prompt_extra.strip()
         global_extra = self.settings.additional_instructions.strip()
-        system_prompt = """You are an expert in creating diverse flashcard types to test knowledge from different angles.
+        system_prompt = (
+            """You are an expert in creating diverse flashcard types to test knowledge from different angles.
         
         Generate 3-4 different card types (e.g., definition, reverse, application, example).
         Each variant must focus on ONE piece of knowledge (single-information principle).
@@ -456,7 +515,9 @@ Create 2-3 simpler cards that each focus on ONE concept."""
             "front": "question",
             "back": "answer",
             "rationale": "why this type helps"
-        }""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
+        }"""
+            + f"\n\nStyle and grounding constraints:\n{style_rules}"
+        )
 
         deck_context_str = json.dumps(deck_context, ensure_ascii=False)
         user_prompt = f"""Generate diverse card types from this information:
@@ -531,7 +592,9 @@ Deck context:
                         "front": _normalize_compact_text(
                             front, self.settings.max_front_words
                         ),
-                        "back": _normalize_compact_text(back, self.settings.max_back_words),
+                        "back": _normalize_compact_text(
+                            back, self.settings.max_back_words
+                        ),
                         "rationale": rat,
                     }
                 )
@@ -631,7 +694,8 @@ Do not infer hidden facts."""
         source_basis = "\n".join(f"- {f}" for f in facts) if facts else source_text
         source_label = "extracted facts" if facts else "source text"
 
-        system_prompt = f"""You are an expert at creating high-quality flashcards from text.
+        system_prompt = (
+            f"""You are an expert at creating high-quality flashcards from text.
         
 Generate {num_cards} clear, concise flashcards following the SINGLE INFORMATION PRINCIPLE.
 Each card should:
@@ -649,6 +713,7 @@ Respond with valid JSON array (no markdown):
 [
     {{"front": "question", "back": "answer", "tags": ["tag1", "tag2"]}}
 ]""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
+        )
 
         deck_info = json.dumps(
             {
@@ -685,15 +750,11 @@ Return valid JSON array only."""
                 )
             )
 
-            # Parse JSON response
             resp_text = response.text
-            if "```json" in resp_text:
-                resp_text = resp_text.split("```json")[1].split("```")[0]
-            elif "```" in resp_text:
-                resp_text = resp_text.split("```")[1].split("```")[0]
-
-            cards = json.loads(resp_text.strip())
-            if not isinstance(cards, list) or not cards:
+            fragment = _extract_json_fragment_from_llm_text(resp_text or "")
+            parsed = _parse_json_embedded(fragment)
+            cards = _coerce_generation_card_list(parsed)
+            if not cards:
                 raise ValueError("LLM returned no cards")
 
             out_cards = [
@@ -704,7 +765,11 @@ Return valid JSON array only."""
                     "back": _normalize_compact_text(
                         card.get("back", ""), self.settings.max_back_words
                     ),
-                    "tags": card.get("tags", []),
+                    "tags": (
+                        card.get("tags", [])
+                        if isinstance(card.get("tags"), list)
+                        else []
+                    ),
                 }
                 for card in cards
             ]
@@ -761,7 +826,9 @@ Return valid JSON array only."""
         facts: list[str] = []
         if self.settings.agentic_enabled:
             facts = await self._extract_supported_facts(
-                source_text, deck_context, purpose=f"generate flashcards from {image_type}"
+                source_text,
+                deck_context,
+                purpose=f"generate flashcards from {image_type}",
             )
         if (
             not facts
@@ -771,7 +838,8 @@ Return valid JSON array only."""
             return []
         source_basis = "\n".join(f"- {f}" for f in facts) if facts else source_text
 
-        system_prompt = f"""You are an expert at extracting flashcard content from visual materials.
+        system_prompt = (
+            f"""You are an expert at extracting flashcard content from visual materials.
 
 {type_instructions.get(image_type, "Extract the most important information.")}
 
@@ -787,6 +855,7 @@ Respond with valid JSON array (no markdown):
 [
     {{"front": "question", "back": "answer", "tags": ["tag1"]}}
 ]""" + f"\n\nStyle and grounding constraints:\n{style_rules}"
+        )
 
         user_prompt = f"""Create {num_cards} flashcards from this {image_type} content:
 
@@ -816,15 +885,11 @@ Return valid JSON array only."""
                 )
             )
 
-            # Parse JSON response
             resp_text = response.text
-            if "```json" in resp_text:
-                resp_text = resp_text.split("```json")[1].split("```")[0]
-            elif "```" in resp_text:
-                resp_text = resp_text.split("```")[1].split("```")[0]
-
-            cards = json.loads(resp_text.strip())
-            if not isinstance(cards, list) or not cards:
+            fragment = _extract_json_fragment_from_llm_text(resp_text or "")
+            parsed = _parse_json_embedded(fragment)
+            cards = _coerce_generation_card_list(parsed)
+            if not cards:
                 raise ValueError("LLM returned no cards")
             out_cards = [
                 {
@@ -834,7 +899,11 @@ Return valid JSON array only."""
                     "back": _normalize_compact_text(
                         card.get("back", ""), self.settings.max_back_words
                     ),
-                    "tags": card.get("tags", []),
+                    "tags": (
+                        card.get("tags", [])
+                        if isinstance(card.get("tags"), list)
+                        else []
+                    ),
                 }
                 for card in cards
             ]

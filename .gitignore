@@ -64,7 +64,3 @@ ipython_config.py
 .env.local
 !.env.example
 *.local
-
-# Project-specific
-build/
-dist/

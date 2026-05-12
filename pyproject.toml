@@ -36,12 +36,12 @@ dev = "python scripts/dev.py all"
 dev-build = "python scripts/dev.py build --skip-vendor"
 dev-install = "python scripts/dev.py install"
 fmt = [
-  "black .",
-  "ruff check --fix ."
+  "black ai_flashcards scripts tests runanki.py",
+  "ruff check --fix ai_flashcards scripts tests runanki.py",
 ]
 check = [
-  "black --check .",
-  "ruff check .",
+  "black --check ai_flashcards scripts tests runanki.py",
+  "ruff check ai_flashcards scripts tests runanki.py",
   "mypy scripts",
 ]
 test = "pytest {args}"
@@ -49,6 +49,8 @@ test = "pytest {args}"
 [dependency-groups]
 dev = [
   "pytest>=8.3",
+  "ruff>=0.8",
+  "black>=24",
 ]
 
 [tool.uv]
@@ -57,6 +59,21 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+src = ["ai_flashcards", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ai_flashcards", "tests"]
 
 [tool.mypy]
 # Vendored wheels live under ai_flashcards/lib/ (helps when running broader `mypy` locally).

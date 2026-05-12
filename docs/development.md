@@ -1,5 +1,30 @@
 # Development
 
+## Repository layout
+
+| Path | Purpose |
+|------|---------|
+| [`ai_flashcards/`](../ai_flashcards/) | Add-on package (UI, card services, Anki bridge, [`llm/`](../ai_flashcards/llm/) providers), [`manifest.json`](../ai_flashcards/manifest.json), bundled `lib/` after vendoring |
+| [`scripts/`](../scripts/) | CLI: build (`build_all.py`), dev loop (`dev.py`), install, vendor |
+| [`tests/unit/`](../tests/unit/) | Pytest modules (`test_*.py`) |
+| [`tests/support/`](../tests/support/) | Shared test doubles (e.g. fake LLM) |
+| `docs/` | Contributor documentation (this file) |
+
+**Import convention:** pytest sets `AI_FLASHCARDS_LITE_IMPORT=1` in [`tests/conftest.py`](../tests/conftest.py) so importing `ai_flashcards` does not boot Qt/UI during tests.
+
+## Style and checks (uv)
+
+Python **3.13+**. Formatter: **Black** (88 columns). Linter: **Ruff** (see [`pyproject.toml`](../pyproject.toml)).
+
+```bash
+uv sync --all-groups
+uv run ruff check ai_flashcards scripts tests runanki.py
+uv run black --check ai_flashcards scripts tests runanki.py
+uv run pytest tests/
+```
+
+See also **[`AGENTS.md`](../AGENTS.md)** for a short orientation aimed at automation and new contributors.
+
 ## Daily workflow
 
 ```bash
@@ -42,9 +67,11 @@ Build output: `build/ai_flashcards.ankiaddon`.
 
 ## Format and lint
 
+Same paths as [Style and checks (uv)](#style-and-checks-uv). Hatch shortcuts:
+
 ```bash
-uv run hatch run fmt    # black + ruff --fix
-uv run hatch run check  # black --check, ruff, mypy (mypy may include vendored lib noise)
+uv run hatch run fmt    # black + ruff --fix on ai_flashcards, scripts, tests, runanki.py
+uv run hatch run check  # black --check, ruff, mypy scripts (mypy may include vendored lib noise if scope grows)
 ```
 
 ## Environment variables (AI Flashcards)

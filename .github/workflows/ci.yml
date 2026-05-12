@@ -18,14 +18,24 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install tooling
-        run: pip install pytest
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: |
+          uv run ruff check ai_flashcards scripts tests runanki.py
+          uv run black --check ai_flashcards scripts tests runanki.py
 
       - name: Tests
-        run: pytest -q
+        run: uv run pytest -q
 
       - name: Build add-on
-        run: python scripts/build_all.py
+        run: uv run python scripts/build_all.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

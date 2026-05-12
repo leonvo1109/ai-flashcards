@@ -31,8 +31,11 @@ ai-flashcards/
 ├── ai_flashcards/       # Add-on source + manifest.json
 ├── scripts/             # build_all.py, install_dev.py, vendor_dependencies.py
 ├── tests/
-├── docs/                # Contributor docs
-└── .github/workflows/   # CI (ci.yml) → build artifact
+│   ├── unit/            # pytest modules (test_*.py)
+│   └── support/         # shared test helpers / fakes
+├── docs/                # Contributor docs (see docs/development.md)
+├── AGENTS.md            # Repo orientation for contributors & tooling
+└── .github/workflows/   # CI → tests + build artifact
 ```
 
 ## License
