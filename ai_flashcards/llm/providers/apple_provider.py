@@ -1,5 +1,5 @@
-from ..types import AgentRequest, AgentResponse
 from ...lib.apple_fm_sdk import *
+from ..types import AgentRequest, AgentResponse
 
 
 class AppleProvider:

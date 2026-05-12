@@ -1,4 +1,5 @@
 from typing import Protocol
+
 from .types import AgentRequest, AgentResponse
 
 

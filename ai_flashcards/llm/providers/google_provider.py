@@ -1,6 +1,8 @@
 import os
+
 from google import genai
 from google.genai.types import GenerateContentConfig
+
 from ..types import AgentRequest, AgentResponse
 
 

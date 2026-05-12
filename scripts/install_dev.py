@@ -6,12 +6,12 @@ Nützlich für schnelle Development-Zyklen.
 Sicherheit: Bei Fehlern bleibt das alte Add-on intakt.
 """
 
+import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
-import subprocess
 import zipfile
-import argparse
 from pathlib import Path
 
 ANKI_ADDONS_DIRS = {

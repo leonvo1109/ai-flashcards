@@ -1,9 +1,8 @@
 """Tag system for flashcard management and organization."""
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-import json
 
 
 @dataclass
@@ -35,7 +34,7 @@ class TagManager:
         """Load tag configuration from file."""
         if self.config_file.exists():
             try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
+                with open(self.config_file, encoding="utf-8") as f:
                     data = json.load(f)
                     return TagConfig(
                         default_tags=data.get("default_tags", {}),
@@ -111,7 +110,7 @@ class TagManager:
             source_type, is_verified, is_variant
         )
 
-    def get_source_tag(self, source_type: str) -> Optional[str]:
+    def get_source_tag(self, source_type: str) -> str | None:
         """Get source tag based on source type."""
         mapping = {
             "text": "ai_from_text",

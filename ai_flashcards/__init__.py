@@ -19,8 +19,9 @@ else:
     except ImportError:
         pass
 
-    from .ui_enhanced import EnhancedUI  # noqa: E402
     from aqt import gui_hooks  # noqa: E402
+
+    from .ui_enhanced import EnhancedUI  # noqa: E402
 
     ui = EnhancedUI()
 

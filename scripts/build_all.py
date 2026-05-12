@@ -1,9 +1,9 @@
-from pathlib import Path
+import argparse
 import json
-import zipfile
 import subprocess
 import sys
-import argparse
+import zipfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ADDON_DIR = ROOT / "ai_flashcards"

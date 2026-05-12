@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 from anki.decks import DeckId
 from aqt import mw
@@ -199,7 +199,7 @@ class AnkiService:
         return ""
 
     @staticmethod
-    def get_last_card() -> Optional[CardInfo]:
+    def get_last_card() -> CardInfo | None:
         """Get the last added or viewed card from the current deck."""
         if not mw.col:
             return None
@@ -237,7 +237,7 @@ class AnkiService:
             return None
 
     @staticmethod
-    def get_card_by_id(card_id: int) -> Optional[CardInfo]:
+    def get_card_by_id(card_id: int) -> CardInfo | None:
         """Get card information by card ID."""
         if not mw.col:
             return None
@@ -336,7 +336,7 @@ class AnkiService:
             return []
 
     @staticmethod
-    def get_first_card_id_for_note(note_id: int) -> Optional[int]:
+    def get_first_card_id_for_note(note_id: int) -> int | None:
         """Return one card id belonging to the note (for tagging after note creation)."""
         if not mw.col:
             return None
@@ -356,7 +356,7 @@ class AnkiService:
         deck_name: str,
         model_name: str = "Basic",
         tags: list[str] | None = None,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Add a new card to Anki.
 
         Returns the note ID if successful, None otherwise.
@@ -430,9 +430,9 @@ class AnkiService:
     @staticmethod
     def update_card(
         card_id: int,
-        front: Optional[str] = None,
-        back: Optional[str] = None,
-        tags: Optional[list[str]] = None,
+        front: str | None = None,
+        back: str | None = None,
+        tags: list[str] | None = None,
     ) -> bool:
         """Update an existing card."""
         if not mw.col:
@@ -553,7 +553,7 @@ class AnkiService:
             return {"deck_name": deck_name, "error": str(e)}
 
     @staticmethod
-    def get_currently_reviewed_card() -> Optional[CardInfo]:
+    def get_currently_reviewed_card() -> CardInfo | None:
         """Get the card currently being reviewed (if in review mode)."""
         if not mw.col or not hasattr(mw, "reviewer"):
             return None
@@ -580,7 +580,7 @@ class AnkiService:
             return None
 
     @staticmethod
-    def get_current_context_card() -> Optional[CardInfo]:
+    def get_current_context_card() -> CardInfo | None:
         """Get the most relevant card based on current Anki context."""
         # Try: currently reviewed card > last added card > most recent card
         card = AnkiService.get_currently_reviewed_card()
@@ -641,7 +641,7 @@ class AnkiService:
             return []
 
     @staticmethod
-    def get_manual_cards(deck_name: Optional[str] = None) -> list[CardInfo]:
+    def get_manual_cards(deck_name: str | None = None) -> list[CardInfo]:
         """Get manually created cards (not AI-generated)."""
         if not mw.col:
             return []
@@ -656,8 +656,9 @@ class AnkiService:
                 card_ids = AnkiService.get_recent_cards(limit=2500)
 
             manual_cards = []
-            from .tag_system import TagManager
             from pathlib import Path
+
+            from .tag_system import TagManager
 
             try:
                 if getattr(mw, "col", None) and getattr(mw.col, "path", None):

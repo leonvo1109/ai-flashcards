@@ -3,34 +3,11 @@
 import asyncio
 import tempfile
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, cast
+from typing import cast
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
-    QComboBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QSplitter,
-    QTextEdit,
-    QFileDialog,
-    QCheckBox,
-    QSpinBox,
-    QTabWidget,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
 from aqt import mw
 from aqt.qt import (
     QAction,
@@ -40,16 +17,40 @@ from aqt.qt import (
     QMenu,
 )
 from aqt.utils import qconnect, showInfo, showWarning
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from .llm.factory import build_provider
 from .anki_service import AnkiService, CardInfo
+from .card_hierarchy import CardHierarchyManager
 from .card_services import (
-    CardVerificationService,
     CardGenerationService,
+    CardVerificationService,
     MultiTypeCards,
 )
+from .llm.factory import build_provider
 from .tag_system import TagManager
-from .card_hierarchy import CardHierarchyManager
 
 
 @dataclass
@@ -233,7 +234,9 @@ class ImportDropTextEdit(QTextEdit):
     """QTextEdit that accepts dropped files and forwards their paths."""
 
     def __init__(
-        self, on_files_dropped: Callable[[list[str]], None], parent: QWidget | None = None
+        self,
+        on_files_dropped: Callable[[list[str]], None],
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_files_dropped = on_files_dropped
@@ -1275,7 +1278,8 @@ class EnhancedUI:
                             texts = [pg.extract_text() or "" for pg in reader.pages]
                             extracted = "\n\n".join(texts).strip()
                             content_display.setPlainText(
-                                extracted or f"[PDF: no text extracted from {file_path}]"
+                                extracted
+                                or f"[PDF: no text extracted from {file_path}]"
                             )
                         except Exception:
                             content_display.setPlainText(
@@ -1566,8 +1570,12 @@ class EnhancedUI:
         cb_grounded.setChecked(bool(cfg.get("ai_strict_source_grounding", True)))
         layout.addWidget(cb_grounded)
 
-        cb_fallback = QCheckBox("Allow model knowledge only if source evidence is missing")
-        cb_fallback.setChecked(bool(cfg.get("ai_allow_model_knowledge_fallback", False)))
+        cb_fallback = QCheckBox(
+            "Allow model knowledge only if source evidence is missing"
+        )
+        cb_fallback.setChecked(
+            bool(cfg.get("ai_allow_model_knowledge_fallback", False))
+        )
         layout.addWidget(cb_fallback)
 
         cb_keywords = QCheckBox("Prefer bullet-like keywords (avoid long sentences)")
@@ -1602,7 +1610,9 @@ class EnhancedUI:
         layout.addWidget(QLabel("Global extra instructions"))
         te_global = QTextEdit()
         te_global.setPlainText(str(cfg.get("ai_additional_instructions", "")))
-        te_global.setPlaceholderText("Applied to verify, variants, and media generation.")
+        te_global.setPlaceholderText(
+            "Applied to verify, variants, and media generation."
+        )
         te_global.setMaximumHeight(90)
         layout.addWidget(te_global)
 

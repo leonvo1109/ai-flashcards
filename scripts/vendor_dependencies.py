@@ -4,10 +4,10 @@ Vendors runtime dependencies into ai_flashcards/lib/.
 Uses Anki's Python for ABI compatibility.
 """
 
-import subprocess
-import sys
 import os
 import platform
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

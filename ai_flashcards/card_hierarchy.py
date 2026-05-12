@@ -1,9 +1,8 @@
 """Card hierarchy and grouping system for managing related cards."""
 
-from dataclasses import dataclass, field
-from typing import Optional
-from pathlib import Path
 import json
+from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -43,7 +42,7 @@ class CardHierarchyManager:
         """Load hierarchy metadata from file."""
         if self.hierarchy_file.exists():
             try:
-                with open(self.hierarchy_file, "r", encoding="utf-8") as f:
+                with open(self.hierarchy_file, encoding="utf-8") as f:
                     data = json.load(f)
                     metadata = HierarchyMetadata()
 
@@ -136,11 +135,11 @@ class CardHierarchyManager:
         self._save_hierarchy()
         return True
 
-    def get_group(self, parent_card_id: int) -> Optional[CardGroup]:
+    def get_group(self, parent_card_id: int) -> CardGroup | None:
         """Get a card group by parent card ID."""
         return self.hierarchy.parent_cards.get(parent_card_id)
 
-    def get_parent_of_card(self, card_id: int) -> Optional[int]:
+    def get_parent_of_card(self, card_id: int) -> int | None:
         """Get the parent card ID of a given card, or None if not part of a group."""
         return self.hierarchy.card_to_parent.get(card_id)
 
@@ -166,9 +165,9 @@ class CardHierarchyManager:
     def update_group_metadata(
         self,
         parent_card_id: int,
-        group_name: Optional[str] = None,
-        group_description: Optional[str] = None,
-        group_tags: Optional[list[str]] = None,
+        group_name: str | None = None,
+        group_description: str | None = None,
+        group_tags: list[str] | None = None,
     ) -> bool:
         """Update metadata for a card group."""
         group = self.hierarchy.parent_cards.get(parent_card_id)
